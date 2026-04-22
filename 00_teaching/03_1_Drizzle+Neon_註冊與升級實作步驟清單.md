@@ -19,6 +19,12 @@
 
 本講義的重點不是一次把資料層、auth、部署全部重做，而是先完成「JSON store -> PostgreSQL + Drizzle」這條主線。
 
+補充定位：
+
+- 第一次 Render 部署已放到 V7 結尾先教
+- 這份講義只專注在 V8 的資料庫升級
+- V8 完成後，再補講「相對 V7 多了哪些部署調整」
+
 ---
 
 ## 使用方式
@@ -851,6 +857,91 @@ git push -u origin feat/v8-drizzle-neon
 一句話總結：
 
 - `main` 上的新教材 commit，只有在你明確合進 `feat/v8-drizzle-neon` 後，V8 分支才會看到同樣更新
+
+### 若學生已經 clone 整個 repo，本機要怎麼更新
+
+這是另一個很常見的誤解：
+
+- 學生昨天 `clone` 過 repo
+- 今天老師在 GitHub 上更新了教材
+- 學生以為打開原本那個資料夾，內容就會自己變新
+
+答案是：不會。
+
+`clone` 只是當下那一刻的快照。之後遠端有新 commit，本機一定要自己抓。
+
+### 最基本情境：只想更新本機的 `main`
+
+若學生沒有在其他分支做開發，只是想把教材更新到最新，可直接執行：
+
+```bash
+git switch main
+git pull origin main
+```
+
+這兩步的意思是：
+
+1. 切回本機的 `main`
+2. 把遠端 `origin/main` 的最新 commit 拉下來
+
+### 第二種情境：自己正在 `feat/v8-drizzle-neon` 開發
+
+若學生本機正在 V8 分支開發，需求通常不是只更新 `main`，而是：
+
+- 先拿到最新 `main`
+- 再把最新教材同步進自己的 V8 分支
+
+建議順序如下：
+
+```bash
+git switch main
+git pull origin main
+git switch feat/v8-drizzle-neon
+git merge main
+git push -u origin feat/v8-drizzle-neon
+```
+
+這組做法很適合教學初期，因為比較直觀：
+
+- 先更新本機 `main`
+- 再把 `main` 合進目前開發分支
+
+### 另一種更穩的寫法：明確抓遠端後再合併
+
+若想把「遠端更新」與「分支同步」分得更清楚，也可以教這組：
+
+```bash
+git switch feat/v8-drizzle-neon
+git fetch origin
+git merge origin/main
+```
+
+這種寫法的好處是：
+
+- 不必先切回本機 `main`
+- 可以直接把遠端最新的 `origin/main` 合進目前分支
+- 學生更容易分清楚 `fetch` 跟 `merge` 是兩個不同動作
+
+### 若想保持歷史更直，也可以用 rebase
+
+當學生已經比較熟悉 Git 後，可再介紹：
+
+```bash
+git switch feat/v8-drizzle-neon
+git fetch origin
+git rebase origin/main
+```
+
+但教學初期仍建議：
+
+- 先教 `merge`
+- 等學生理解分支同步後，再補 `rebase`
+
+### 課堂上最值得讓學生記住的一句話
+
+```text
+clone 只是當下快照，不是自動同步資料夾
+```
 
 ### 這次實作建議的最小指令
 

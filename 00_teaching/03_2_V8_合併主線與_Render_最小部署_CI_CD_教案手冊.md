@@ -1,6 +1,6 @@
-# V8 合併主線與 Render 最小部署 CI/CD 教案手冊
+# V8 合併主線與 Render 部署調整 CI/CD 教案手冊
 
-本手冊給課堂直接使用，目標是讓從「功能分支完成」走到「主線可部署」，並建立標準 release 流程。
+本手冊給課堂直接使用，前提是學生已經在 V7 做過第一次 Render 部署。這一份的目標，不是重教整套平台操作，而是讓學生從「V7 已可部署」走到「V8 升級後仍可穩定部署」，並建立標準 release 流程。
 
 教學原則固定如下：
 
@@ -23,7 +23,7 @@
 1. 分支驗證（品質閘門）
 2. PR 與 PM/PO 確認
 3. 合併回 main
-4. 用 main 觸發 Render 最小可用部署
+4. 用 main 觸發 V8 的 Render 部署調整
 5. 建立最小 CI/CD
 
 ### 完成標準
@@ -31,6 +31,7 @@
 - `main` 可成功 build 並部署
 - 雲端健康檢查端點成功回應
 - 至少一支核心 API 在雲端可用
+- 資料庫 migration 已正確套用
 - PR 有技術審查與 PM/PO 核可紀錄
 
 ---
@@ -156,46 +157,50 @@ git push origin v8.0.0
 
 ---
 
-## 5. Render 最小可用部署（先求可用，再求完整）
+## 5. Render 部署調整（從 V7 升級到 V8）
 
 ### 為什麼
 
-課堂第一階段部署先達到最小可運作成果，避免一次塞入太多維運細節。Render 原生支援 Bun，**不需要 Docker**，設定更少、除錯更直覺。
+V7 已做過第一次完整部署，因此這一段不再重講 Render 基本操作，而是明確指出「V8 相對 V7 多了哪些調整」。這樣學生比較能養成版本升級時逐項檢查部署差異的習慣。
 
 ### 要做什麼
 
-依序完成以下四項：
+先對照 V7，再補上 V8 的變更：
 
-1. 在 Render 建立 Web Service，連結 GitHub repo
-2. 設定 **Bun** 環境與正確的 Build / Start 指令
-3. 設定 Neon `DATABASE_URL` 等環境變數
-4. 部署成功並驗證健康檢查與核心 API
+1. 保留 V7 已有的 Render Web Service
+2. 更新 Build Command
+3. 補上 Neon `DATABASE_URL` 等環境變數
+4. 部署成功並驗證健康檢查、核心 API 與 migration
 
 ### 怎麼做
 
 ---
 
-#### 步驟 1：建立帳號並連結 repo
+#### 步驟 1：先用 V7 當對照基準
 
-1. 前往 <https://render.com> → 點擊 **Sign Up**，以 GitHub 帳號登入
-2. 儀表板 → **New +** → **Web Service**
-3. 選擇 **GitHub**，授權後選取你的 repo
+先提醒學生，V7 時已經完成的是：
+
+| 項目          | V7 設定                         |
+| ------------- | ------------------------------- |
+| Environment   | **Bun**                         |
+| Branch        | `main`                          |
+| Build Command | `bun install && bun run build`  |
+| Start Command | `bun run start`                 |
+
+V8 的任務不是重來一次，而是看清楚哪裡和 V7 不同。
 
 ---
 
-#### 步驟 2：設定服務基本資訊
+#### 步驟 2：更新服務設定
 
-| 欄位          | 值                                                   |
-| ------------- | ---------------------------------------------------- |
-| Name          | `breakfast-api`（可自訂）                            |
-| Region        | `Singapore`（距台灣較近）                            |
-| Branch        | `main`                                               |
-| Environment   | **Bun**（不選 Node / Docker）                        |
-| Build Command | `bun install && bun run db:migrate && bun run build` |
-| Start Command | `bun start`                                          |
-| Plan          | Free                                                 |
+| 欄位          | V7                             | V8                                                   |
+| ------------- | ------------------------------ | ---------------------------------------------------- |
+| Environment   | **Bun**                        | **Bun**（不變）                                      |
+| Branch        | `main`                         | `main`（不變）                                       |
+| Build Command | `bun install && bun run build` | `bun install && bun run db:migrate && bun run build` |
+| Start Command | `bun run start`                | `bun run start`（不變）                              |
 
-> **為什麼 Build Command 這樣寫？**
+> **V8 為什麼只多了 `db:migrate`？**
 >
 > - `bun install`：下載依賴
 > - `bun run db:migrate`：執行 `drizzle-kit migrate`，把 `drizzle/` 資料夾中的 SQL 套用到 Neon（在程式碼上線前先確保 schema 正確）
@@ -203,15 +208,16 @@ git push origin v8.0.0
 
 ---
 
-#### 步驟 3：設定環境變數
+#### 步驟 3：補上 V8 新增的環境變數
 
 在 **Environment → Add Environment Variable** 逐一加入：
 
-| Key                  | 說明                                                                                             |
-| -------------------- | ------------------------------------------------------------------------------------------------ |
-| `DATABASE_URL`       | Neon 連線 URL，格式：`postgresql://user:pass@ep-xxx.region.aws.neon.tech/dbname?sslmode=require` |
-| `NODE_ENV`           | `production`                                                                                     |
-| `API_ALLOWED_ORIGIN` | 前端網址（部署後 Render 提供），初期可先填 `*`                                                   |
+| Key                        | V7 | V8 說明                                                                                           |
+| -------------------------- | -- | ------------------------------------------------------------------------------------------------- |
+| `NODE_ENV`                 | 有 | `production`                                                                                      |
+| `API_ALLOWED_ORIGIN`       | 有 | 前端網址（部署後 Render 提供），初期可先填 `*`                                                    |
+| `DATABASE_URL`             | 無 | Neon 連線 URL，格式：`postgresql://user:pass@ep-xxx.region.aws.neon.tech/dbname?sslmode=require` |
+| `DATABASE_URL_MIGRATION`   | 無 | 若 migration 與 runtime 要分不同 URL，就另外設定；若相同可省略                                    |
 
 > **`DATABASE_URL_MIGRATION` 是什麼？**
 >
@@ -228,15 +234,15 @@ git push origin v8.0.0
 
 ---
 
-#### 步驟 4：建立 Web Service 並等待首次部署
+#### 步驟 4：重新部署並確認執行順序
 
-點擊 **Create Web Service**，Render 會依序執行：
+更新設定後重新部署，Render 會依序執行：
 
 ```
 1. bun install
-2. drizzle-kit migrate   ← 套用 drizzle/ SQL 到 Neon
+2. bun run db:migrate    ← 套用 drizzle/ SQL 到 Neon
 3. bun run build         ← 產生 dist/backend.js
-4. bun start             ← 啟動 dist/backend.js，監聽 process.env.PORT
+4. bun run start         ← 啟動 dist/backend.js，監聽 process.env.PORT
 ```
 
 ---
@@ -252,6 +258,8 @@ curl -i https://<your-render-domain>.onrender.com/health
 curl -i https://<your-render-domain>.onrender.com/api/menu
 ```
 
+若課堂已有資料庫相關 API，也建議再補一個與資料庫有關的驗證，避免只驗到靜態頁面與既有讀取路徑。
+
 ---
 
 #### 常見問題排查
@@ -260,36 +268,15 @@ curl -i https://<your-render-domain>.onrender.com/api/menu
 | ------------------------------ | --------------------------------------------------------------- | ------------------------------------------------------------------------------------ |
 | `DATABASE_URL is not set`      | 環境變數未設定                                                  | 補上 `DATABASE_URL`                                                                  |
 | `drizzle-kit migrate` 失敗     | Neon URL 格式錯誤，或 SSL 未啟用                                | 確認 URL 包含 `?sslmode=require`                                                     |
-| Build 成功但啟動失敗           | `PORT` 未由 Render 傳入                                         | 確認 `backend.ts` 讀取 `process.env.PORT`                                            |
-| 首次請求很慢（~30 秒）         | Free plan 閒置後會 spin down                                    | 預期行為，正式環境需付費計劃                                                         |
-| 前端資源 404                   | `public/` 未正確 serve                                          | 確認 `@elysiajs/static` plugin 已掛載，且 build 有產生 `public/`                     |
-| 加入購物車失敗但重新登入後正常 | 瀏覽器 `localStorage` 保留舊 `userId`，目前資料源查不到該使用者 | 先登出再登入；前端在 `/api/orders` 收到 `401/403/404` 時應清理登入狀態並提示重新登入 |
+| migration 卡住或連不到資料庫 | `DATABASE_URL_MIGRATION` 貼錯，或 direct / pooled URL 用反      | 優先回到 Neon Dashboard 重新比對兩條 URL                                             |
+| Build 成功但啟動失敗         | `PORT` 未由 Render 傳入，或 start 指令未對準正式輸出檔          | 確認仍使用 `bun run start`，且 `backend.ts` 讀取 `process.env.PORT`                  |
+| 前端資源 404                 | `public/` 未正確 serve                                          | 確認 `@elysiajs/static` plugin 已掛載，且 build 有產生 `public/`                     |
+| 首次請求很慢（~30 秒）       | Free plan 閒置後會 spin down                                    | 預期行為，正式環境需付費計劃                                                         |
 
-#### V7 JSON store 版的補充排查流程
+補充提醒：
 
-若在 Render 上看到以下現象：
-
-- 點「加入購物車」當下出現錯誤訊息
-- 登出再登入後，購物車內卻看得到剛才加入的品項
-
-不要立刻下結論說「Render 寫不進 JSON」。更合理的判讀通常是：
-
-1. 後端已完成 `PATCH /api/orders/:id`
-2. `store.json` 也已更新
-3. 但前端在例外路徑中，沒有把 server 最新訂單狀態同步回來
-
-建議課堂排查順序：
-
-1. 先看 Render logs，確認 `PATCH /api/orders/:id` 是否回 `200`
-2. 再看瀏覽器 Network，確認失敗的是哪一支 request
-3. 若 server 其實已回成功，回頭檢查前端 `catch` 是否直接顯示通用錯誤
-4. 若重新登入後資料存在，優先判斷為「前端狀態同步問題」，不是「JSON 寫入失敗」
-
-對應修正原則：
-
-1. 建立訂單失敗時，區分登入失效與一般錯誤
-2. `addToCart` 失敗時，先重新抓目前訂單，再決定是否真的顯示失敗訊息
-3. 只有在重新抓目前訂單也失敗時，才視為真正失敗
+- 若是 V7 時就出現過的前端同步或 `localStorage` 問題，請先回去用 V7 的排查思路判讀
+- V8 這一份主要新增的是資料庫與 migration 的排查，不要把舊問題和新問題混成同一類
 
 ---
 
@@ -340,7 +327,7 @@ jobs:
 2. 15-30 分：V8 分支驗證
 3. 30-50 分：PR、Reviewer、PM/PO 核可
 4. 50-65 分：merge 回 main + tag
-5. 65-80 分：Render 部署與雲端驗證
+5. 65-80 分：V8 部署調整與雲端驗證
 6. 80-90 分：建立最小 CI 並回顧
 
 ---
@@ -350,13 +337,13 @@ jobs:
 1. 功能完成不等於可上線，合併治理才是上線起點。
 2. 正式環境只看 main，feature branch 不直接進 production。
 3. 合併前要有兩種確認：技術可行與業務可上線。
-4. 先做最小部署，再逐步補齊完整維運能力。
+4. V7 先學完整部署，V8 起就只補部署差異。
 
 ---
 
 ## 9. 下一步銜接
 
-完成本手冊後，再進入 V9：`Better Auth + Google provider`。這樣會先有穩定主線與部署基礎，再理解正式 auth 架構的價值。
+完成本手冊後，再進入 V9：`Better Auth + Google provider`。到時也建議延續同一節奏，在 V9 完成後再補一次 auth 版的部署調整。
 
 ---
 
