@@ -128,15 +128,18 @@ bun run test
 
 ---
 
-## 4. 合併回 main（release discipline）
+## 4. 合併前先完成 Render 設定
 
 ### 為什麼
 
-主線合併是「版本交付」動作，不是單純把程式碼湊在一起。這一步決定是否能穩定部署。
+因為 Render 會在 `main` 有新 commit 時自動部署，所以 V8 不能先 merge 再回頭補設定。比較穩的做法是先把 Render 的 Build Command 與環境變數準備好，再讓 `main` 觸發這次部署。
 
 ### 要做什麼
 
-合併策略建議使用 squash merge（教學中最容易對照版本變更）。
+這一段先做兩件事：
+
+1. 若 `main` 目前仍代表 V7，先保留 `v7-baseline` branch 與 `v7.0.0` tag
+2. 先到 Render 把 V8 需要的設定改好，但先不要讓錯誤版本提早部署
 
 補充提醒：
 
@@ -145,14 +148,6 @@ bun run test
 - 這樣之後即使 `main` 前進到 V8，也還能清楚回到 V7 基準
 
 ### 怎麼做
-
-```bash
-git checkout main
-git pull origin main
-git merge --squash feat/v8-drizzle-neon
-git commit -m "feat: merge V8 to main for deployment baseline"
-git push origin main
-```
 
 若現在的 `main` 仍是 V7，進入 V8 前可先做：
 
@@ -165,16 +160,15 @@ git push origin v7-baseline
 git push origin v7.0.0
 ```
 
-可選但建議：在 main 打版本標籤。
+補充提醒：
 
-```bash
-git tag -a v8.0.0 -m "V8 baseline before V9"
-git push origin v8.0.0
-```
+- 若 Render 的環境變數畫面有 `Save only`，先用 `Save only`
+- 若沒有 `Save only`，就先把所有設定一次改完，再進行 merge
+- `Auto-Deploy Off` 不建議當成課堂標準步驟，避免學生後續忘記切回 `On Commit` 導致 main 更新卻沒有自動部署；這只適合當成進階保守作法或故障排除手段
 
 ---
 
-## 5. Render 部署調整（從 V7 升級到 V8）
+## 5. Render 部署調整、合併主線與打版本標籤（從 V7 升級到 V8）
 
 ### 為什麼
 
@@ -182,12 +176,14 @@ V7 已做過第一次完整部署，因此這一段不再重講 Render 基本操
 
 ### 要做什麼
 
-先對照 V7，再補上 V8 的變更：
+先對照 V7，再依序完成 V8 的變更：
 
 1. 保留 V7 已有的 Render Web Service
 2. 更新 Build Command
-3. 補上 Neon `DATABASE_URL` 等環境變數
-4. 部署成功並驗證健康檢查、核心 API 與 migration
+3. 補上 `STORE_DRIVER=postgres`、`DATABASE_URL`、`DATABASE_URL_MIGRATION` 等 V8 環境變數
+4. 設定完成後，再把 `feat/v8-drizzle-neon` merge 回 `main`
+5. 由 `main` 觸發部署並驗證健康檢查、核心 API 與 migration
+6. 部署成功後，再打 `v8.0.0` tag
 
 ### 怎麼做
 
@@ -238,9 +234,10 @@ V8 的任務不是重來一次，而是看清楚哪裡和 V7 不同。
 | Key                        | V7 | V8 說明                                                                                           |
 | -------------------------- | -- | ------------------------------------------------------------------------------------------------- |
 | `NODE_ENV`                 | 有 | `production`                                                                                      |
-| `API_ALLOWED_ORIGIN`       | 有 | 前端網址（部署後 Render 提供），初期可先填 `*`                                                    |
+| `API_ALLOWED_ORIGIN`       | 有 | V8 初期可先留空；若前後端分站部署，或進入 auth / OAuth 流程，再填明確前端網址                    |
+| `STORE_DRIVER`             | 無 | 設成 `postgres`，讓 runtime 實際使用 `PgStore`，而不是 fallback 回 JSON store                    |
 | `DATABASE_URL`             | 無 | Neon 連線 URL，格式：`postgresql://user:pass@ep-xxx.region.aws.neon.tech/dbname?sslmode=require` |
-| `DATABASE_URL_MIGRATION`   | 無 | 若 migration 與 runtime 要分不同 URL，就另外設定；若相同可省略                                    |
+| `DATABASE_URL_MIGRATION`   | 無 | 建議一併設定；若和 `DATABASE_URL` 相同，可先貼同一個值，便於 `db:check` 與部署排錯               |
 
 > **`DATABASE_URL_MIGRATION` 是什麼？**
 >
@@ -251,13 +248,36 @@ V8 的任務不是重來一次，而是看清楚哪裡和 V7 不同。
 >   process.env.DATABASE_URL_MIGRATION ?? process.env.DATABASE_URL;
 > ```
 >
-> 如果 migration 用的連線（通常是 Neon **direct connection**）與 runtime 用的連線（Neon **connection pooler**）不同，就另外設定 `DATABASE_URL_MIGRATION`；若相同則只設 `DATABASE_URL` 即可。
+> 如果 migration 用的連線（通常是 Neon **direct connection**）與 runtime 用的連線（Neon **connection pooler**）不同，就另外設定 `DATABASE_URL_MIGRATION`；若相同，`drizzle-kit migrate` 雖然可直接 fallback 到 `DATABASE_URL`，但教學上仍建議先填同一個值，這樣 `bun run db:check`、課堂排錯與之後切換 direct URL 時都比較一致。
 >
 > Neon 免費帳號的 Direct Connection 與 Pooler URL 可在 Neon Dashboard → Connection Details 各別複製。
 
+補充提醒：
+
+- 若畫面有 `Save only`，這一步先選 `Save only`
+- 目的不是立刻部署，而是先把 V8 所需設定準備好
+- 等下面真的 merge 到 `main` 時，再讓 Render 用正確設定自動部署
+- 其中 `STORE_DRIVER=postgres` 不能漏，否則 runtime 仍可能 fallback 回 JSON store
+
 ---
 
-#### 步驟 4：重新部署並確認執行順序
+#### 步驟 4：設定完成後，再 merge 到 `main`
+
+合併策略建議使用 squash merge（教學中最容易對照版本變更）。
+
+```bash
+git switch main
+git pull origin main
+git merge --squash feat/v8-drizzle-neon
+git commit -m "feat: merge V8 to main for deployment baseline"
+git push origin main
+```
+
+當 `main` push 完成後，若 Render 綁定的 branch 是 `main` 且 Auto-Deploy 已開啟，就會自動開始部署。
+
+---
+
+#### 步驟 5：確認部署執行順序並立即驗證
 
 更新設定後重新部署，Render 會依序執行：
 
@@ -268,9 +288,7 @@ V8 的任務不是重來一次，而是看清楚哪裡和 V7 不同。
 4. bun run start         ← 啟動 dist/backend.js，監聽 process.env.PORT
 ```
 
----
-
-#### 步驟 5：部署後立即驗證
+部署完成後立即驗證：
 
 ```bash
 # 健康檢查
@@ -285,10 +303,24 @@ curl -i https://<your-render-domain>.onrender.com/api/menu
 
 ---
 
+#### 步驟 6：部署成功後再打 `v8.0.0` tag
+
+```bash
+git switch main
+git pull origin main
+git tag -a v8.0.0 -m "V8 baseline before V9"
+git push origin v8.0.0
+```
+
+這樣 `v8.0.0` 才會明確代表「已成功部署並驗證過的 V8 基準」。
+
+---
+
 #### 常見問題排查
 
 | 症狀                           | 可能原因                                                        | 解法                                                                                 |
 | ------------------------------ | --------------------------------------------------------------- | ------------------------------------------------------------------------------------ |
+| Build 成功但資料仍寫進 JSON    | 少了 `STORE_DRIVER=postgres`，runtime 仍使用 JSON store         | 在 Render 補上 `STORE_DRIVER=postgres`，重新部署後再驗證                             |
 | `DATABASE_URL is not set`      | 環境變數未設定                                                  | 補上 `DATABASE_URL`                                                                  |
 | `drizzle-kit migrate` 失敗     | Neon URL 格式錯誤，或 SSL 未啟用                                | 確認 URL 包含 `?sslmode=require`                                                     |
 | migration 卡住或連不到資料庫 | `DATABASE_URL_MIGRATION` 貼錯，或 direct / pooled URL 用反      | 優先回到 Neon Dashboard 重新比對兩條 URL                                             |

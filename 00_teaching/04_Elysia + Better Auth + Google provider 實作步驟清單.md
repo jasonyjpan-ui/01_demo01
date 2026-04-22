@@ -146,6 +146,7 @@
 要改的地方：
 
 - 保留既有 `DATABASE_URL`
+- 保留既有 `STORE_DRIVER=postgres`
 - 新增 `BETTER_AUTH_SECRET`
 - 新增 `BETTER_AUTH_URL`
 - 新增 `GOOGLE_CLIENT_ID`

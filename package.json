@@ -10,6 +10,10 @@
     "dev": "concurrently \"cd frontend && bun run dev\" \"bun --watch backend.ts\"",
     "dev:backend": "bun --watch backend.ts",
     "dev:frontend": "cd frontend && bun run dev",
+    "db:check": "bun run ./db/health-check.ts",
+    "db:generate": "drizzle-kit generate",
+    "db:migrate": "drizzle-kit migrate",
+    "db:migrate-json": "bun run ./scripts/migrate-json-to-db.ts",
     "build:frontend": "cd frontend && bun run build",
     "build:backend": "bun build ./backend.ts --outdir ./dist",
     "build": "bun run build:frontend && bun run build:backend",
@@ -20,7 +24,8 @@
     "@types/bun": "latest",
     "@types/react": "^19.2.14",
     "@types/react-dom": "^19.2.3",
-    "concurrently": "^8.2.2"
+    "concurrently": "^8.2.2",
+    "drizzle-kit": "^0.31.7"
   },
   "peerDependencies": {
     "typescript": "^5"
@@ -28,6 +33,8 @@
   "dependencies": {
     "@elysiajs/openapi": "^1.4.14",
     "@elysiajs/static": "^1.4.7",
+    "@neondatabase/serverless": "^1.0.1",
+    "drizzle-orm": "^0.44.5",
     "elysia": "^1.4.28",
     "react": "^19.2.4",
     "react-dom": "^19.2.4",

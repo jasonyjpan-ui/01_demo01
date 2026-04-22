@@ -97,6 +97,7 @@
 在專案根目錄建立或更新 .env：
 
 ```env
+STORE_DRIVER=postgres
 DATABASE_URL=請填入_pooled_url
 DATABASE_URL_MIGRATION=請填入_direct_or_non_pooled_url
 ```
@@ -104,6 +105,7 @@ DATABASE_URL_MIGRATION=請填入_direct_or_non_pooled_url
 另外建立 .env.example（不要放真密碼）：
 
 ```env
+STORE_DRIVER=postgres
 DATABASE_URL=
 DATABASE_URL_MIGRATION=
 ```
@@ -1225,6 +1227,76 @@ bun run db:migrate
 
 目的：分段驗證，避免一次性大改造成難除錯。
 
+### 目前分支進度，對照到哪裡？
+
+若你目前看到的 `feat/v8-drizzle-neon` 狀態，已經具備：
+
+1. `db/schema.ts`
+2. `db/client.ts`
+3. `drizzle.config.ts`
+4. `drizzle/` migration 檔
+5. `store/pg/PgStore.ts`
+6. `store/index.ts` 已能在 JSON / PostgreSQL 之間切換
+7. `bun run db:check` 可以成功
+
+那代表這個分支大致已經完成：
+
+1. Step A：建立保護線
+2. Step B：安裝套件
+3. Step C：建立 Drizzle 基礎檔案
+4. Step D：至少已有第一版 migration 檔
+5. Step E：PgStore 骨架已建立
+
+也就是說，若要從這個狀態繼續往下教，最合理的接續點通常是：
+
+1. 先檢查 `db:generate` / `db:migrate` 的理解是否清楚
+2. 再正式執行 migration
+3. 驗證 PostgreSQL store 是否已覆蓋主要 API 流程
+4. 最後再進資料搬遷與主流量切換
+
+換句話說，這個狀態通常不是「V8 完成」，而是：
+
+- V8 的基礎骨架已經搭好
+- 接下來要進入 migration、驗證與切換階段
+
+若你進一步已完成：
+
+1. `bun run db:migrate`
+2. 啟動後端並用 PostgreSQL store 跑通主要 API
+
+那這個分支就已經不只是在骨架階段，而是已經進入：
+
+- migration 已成功
+- 主要讀寫流程已完成第一輪驗證
+
+這時最合理的接續點通常就是：
+
+1. 補正式的 JSON -> PostgreSQL 搬遷腳本
+2. 驗證搬遷前後資料一致
+3. 定義 `STORE_DRIVER` 的教學預設策略
+
+### 目前還不算完成的部分
+
+即使已經有：
+
+- `db/schema.ts`
+- `PgStore`
+- `db:check` 成功
+
+仍不代表 V8 已全部完成。
+
+通常還要再確認：
+
+1. `bun run db:migrate` 是否真的已對資料庫執行成功
+2. 主要 API 流程是否已實際走 PostgreSQL
+3. JSON 資料是否已完成搬遷
+4. `STORE_DRIVER` 的切換方式是否符合教學安排
+
+所以這一段最適合在課堂上這樣說：
+
+- 現在不是從零開始建 V8
+- 而是站在「V8 骨架已經完成」的狀態，繼續做後半段整合與驗證
+
 ---
 
 ### 3.6 Step F：資料搬遷（JSON -> PostgreSQL）
@@ -1244,6 +1316,18 @@ bun run db:migrate
 3. 任選 3 筆訂單，總金額與項目數一致
 4. 歷史訂單查詢結果一致
 
+若已落地成 package script，可補上：
+
+```bash
+bun run db:migrate-json --reset
+```
+
+建議教學上明確說明：
+
+- `--reset` 代表在開發環境清空既有資料表後重新匯入
+- 這種做法適合課堂示範與重跑驗證
+- 不應直接拿去當正式生產搬遷策略
+
 ---
 
 ### 3.7 Step G：切換 store/index.ts 的實作來源
@@ -1257,6 +1341,16 @@ bun run db:migrate
 
 1. 發生問題可快速切回 JSON
 2. 教學示範可以對照兩種儲存實作
+
+建議這一版明確採用：
+
+- `STORE_DRIVER=postgres`：進入 V8 主流程
+- `STORE_DRIVER=json`：作為教學回退與對照路徑
+
+不建議把「只要偵測到 DATABASE_URL 就自動切 PostgreSQL」當作主要教學行為，因為：
+
+1. 學生較難理解目前到底走哪個 driver
+2. 也不利於示範顯式切換與回退
 
 ---
 
