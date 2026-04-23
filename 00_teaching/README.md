@@ -48,6 +48,12 @@
 13. [04_Elysia + Better Auth + Google provider 實作步驟清單.md](/root/00_nsPrj/01_backEnd/06_elysia/00_demo01/00_teaching/04_Elysia + Better Auth + Google provider 實作步驟清單.md:1)
     當 V8 完成後，再進入 V9 的 auth 升級；完成後也應再補一次本版部署調整。
 
+14. [04*2*新舊V7*設計詳解*為什麼做什麼怎麼做.md](/root/00_nsPrj/01_backEnd/06_elysia/00_demo01/00_teaching/04_2_新舊V7_設計詳解_為什麼做什麼怎麼做.md:1)
+    對照舊 V7 與新 V7 的設計動機、責任切分與實作步驟，作為升級到 V8/V9 前的架構補課。
+
+15. [04*3*舊V8*namespace改造*為什麼做什麼怎麼做.md](/root/00_nsPrj/01_backEnd/06_elysia/00_demo01/00_teaching/04_3_舊V8_namespace改造_為什麼做什麼怎麼做.md:1)
+    說明舊 V8 在 PostgreSQL schema（namespace）隔離下如何恢復可運作，包含設計動機、改造內容與實作流程。
+
 ---
 
 ## 2. 補充閱讀

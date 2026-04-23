@@ -9,12 +9,14 @@
   "scripts": {
     "dev": "concurrently \"cd frontend && bun run dev\" \"bun --watch backend.ts\"",
     "dev:backend": "bun --watch backend.ts",
+    "dev:v8": "bun --watch backend.v8.ts",
     "dev:frontend": "cd frontend && bun run dev",
     "build:frontend": "cd frontend && bun run build",
     "build:backend": "bun build ./backend.ts --outdir ./dist",
     "build": "bun run build:frontend && bun run build:backend",
     "start": "bun dist/backend.js",
-    "preview:frontend": "cd frontend && bun run preview"
+    "preview:frontend": "cd frontend && bun run preview",
+    "v8:db:setup": "bun scripts/setup-v8-legacy-db.ts"
   },
   "devDependencies": {
     "@types/bun": "latest",
@@ -26,8 +28,10 @@
     "typescript": "^5"
   },
   "dependencies": {
+    "@neondatabase/serverless": "^1.0.2",
     "@elysiajs/openapi": "^1.4.14",
     "@elysiajs/static": "^1.4.7",
+    "drizzle-orm": "^0.44.6",
     "elysia": "^1.4.28",
     "react": "^19.2.4",
     "react-dom": "^19.2.4",
