@@ -142,6 +142,7 @@ git switch -c feat/v8-student-custom
 之後平常開發就是：
 
 ```bash
+git status
 git add .
 git commit -m "feat: customize menu flow"
 git push -u origin feat/my-menu-redesign
