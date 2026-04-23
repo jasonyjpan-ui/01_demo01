@@ -265,9 +265,20 @@
             "image_url": "/imgs/menu/cheese-pork-burger.webp"
           },
           "qty": 3
+        },
+        {
+          "item": {
+            "id": 9,
+            "name": "豆漿",
+            "price": 30,
+            "category": "飲料",
+            "description": "每日現煮黃豆漿，口感濃郁不稀薄，提供無糖與微糖兩種甜度選擇。",
+            "image_url": "/imgs/menu/soy-milk.webp"
+          },
+          "qty": 1
         }
       ],
-      "total": 250,
+      "total": 280,
       "status": "pending",
       "createdAt": "2026-04-03T22:36:53.556Z",
       "userId": "0001"
