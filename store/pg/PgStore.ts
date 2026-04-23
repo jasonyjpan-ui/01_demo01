@@ -5,7 +5,7 @@ import type {
   OrderItem,
   User,
 } from "../../shared/contracts.ts";
-import { db } from "../../db/client.ts";
+import { getDb } from "../../db/client.ts";
 import {
   menuItemsTable,
   orderItemsTable,
@@ -61,7 +61,7 @@ export class PgStore implements Store {
   }
 
   async init(): Promise<void> {
-    await db.execute(sql`select 1`);
+    await getDb().execute(sql`select 1`);
 
     await this.seedFromJsonIfEmpty();
     await this.reloadFromDatabase();
@@ -107,7 +107,7 @@ export class PgStore implements Store {
     description: string;
     image_url: string;
   }): Promise<MenuItem> {
-    const [inserted] = await db
+    const [inserted] = await getDb()
       .insert(menuItemsTable)
       .values({
         name: input.name,
@@ -145,7 +145,7 @@ export class PgStore implements Store {
       image_url?: string;
     },
   ): Promise<MenuItem | null> {
-    const [updated] = await db
+    const [updated] = await getDb()
       .update(menuItemsTable)
       .set({
         ...(patch.name !== undefined ? { name: patch.name } : {}),
@@ -181,7 +181,7 @@ export class PgStore implements Store {
   }
 
   async deleteMenuItem(menuId: number): Promise<MenuItem | null> {
-    const [removed] = await db
+    const [removed] = await getDb()
       .delete(menuItemsTable)
       .where(eq(menuItemsTable.id, menuId))
       .returning();
@@ -232,7 +232,7 @@ export class PgStore implements Store {
   async createOrder(input: { userId: number }): Promise<Order> {
     const createdAt = new Date();
 
-    const [inserted] = await db
+    const [inserted] = await getDb()
       .insert(ordersTable)
       .values({
         userId: input.userId,
@@ -309,7 +309,7 @@ export class PgStore implements Store {
 
     if (existingOrderItemIndex !== -1) {
       if (input.qty === 0) {
-        await db
+        await getDb()
           .delete(orderItemsTable)
           .where(
             and(
@@ -319,7 +319,7 @@ export class PgStore implements Store {
           );
         order.items.splice(existingOrderItemIndex, 1);
       } else {
-        await db
+        await getDb()
           .update(orderItemsTable)
           .set({ qty: input.qty })
           .where(
@@ -334,7 +334,7 @@ export class PgStore implements Store {
         }
       }
     } else if (input.qty > 0) {
-      await db.insert(orderItemsTable).values({
+      await getDb().insert(orderItemsTable).values({
         orderId,
         itemId: menuItem.id,
         name: menuItem.name,
@@ -355,7 +355,7 @@ export class PgStore implements Store {
 
     order.total = calculateTotal(order.items);
 
-    await db
+    await getDb()
       .update(ordersTable)
       .set({ total: order.total })
       .where(eq(ordersTable.id, orderId));
@@ -396,7 +396,7 @@ export class PgStore implements Store {
 
     const submittedAt = new Date().toISOString();
 
-    await db
+    await getDb()
       .update(ordersTable)
       .set({
         status: "submitted",
@@ -411,7 +411,7 @@ export class PgStore implements Store {
   }
 
   private async seedFromJsonIfEmpty(): Promise<void> {
-    const [usersCountRow] = await db
+    const [usersCountRow] = await getDb()
       .select({ value: sql<number>`count(*)` })
       .from(usersTable);
 
@@ -430,7 +430,7 @@ export class PgStore implements Store {
     const normalized = normalizeSeedData(parsed);
 
     if (normalized.users.length > 0) {
-      await db.insert(usersTable).values(
+      await getDb().insert(usersTable).values(
         normalized.users.map((user) => ({
           id: user.id,
           email: user.email,
@@ -441,7 +441,7 @@ export class PgStore implements Store {
     }
 
     if (normalized.menu.length > 0) {
-      await db.insert(menuItemsTable).values(
+      await getDb().insert(menuItemsTable).values(
         normalized.menu.map((item) => ({
           id: item.id,
           name: item.name,
@@ -455,7 +455,7 @@ export class PgStore implements Store {
 
     if (normalized.orders.length > 0) {
       for (const order of normalized.orders) {
-        await db.insert(ordersTable).values({
+        await getDb().insert(ordersTable).values({
           id: order.id,
           userId: order.userId,
           total: order.total,
@@ -465,7 +465,7 @@ export class PgStore implements Store {
         });
 
         if (order.items.length > 0) {
-          await db.insert(orderItemsTable).values(
+          await getDb().insert(orderItemsTable).values(
             order.items.map((orderItem) => ({
               orderId: order.id,
               itemId: orderItem.item.id,
@@ -481,34 +481,34 @@ export class PgStore implements Store {
       }
     }
 
-    await db.execute(
+    await getDb().execute(
       sql`select setval('users_id_seq', coalesce((select max(id) from users), 1), true)`,
     );
-    await db.execute(
+    await getDb().execute(
       sql`select setval('menu_items_id_seq', coalesce((select max(id) from menu_items), 1), true)`,
     );
-    await db.execute(
+    await getDb().execute(
       sql`select setval('orders_id_seq', coalesce((select max(id) from orders), 1), true)`,
     );
-    await db.execute(
+    await getDb().execute(
       sql`select setval('order_items_id_seq', coalesce((select max(id) from order_items), 1), true)`,
     );
   }
 
   private async reloadFromDatabase(): Promise<void> {
-    const userRows = await db
+    const userRows = await getDb()
       .select()
       .from(usersTable)
       .orderBy(asc(usersTable.id));
-    const menuRows = await db
+    const menuRows = await getDb()
       .select()
       .from(menuItemsTable)
       .orderBy(asc(menuItemsTable.id));
-    const orderRows = await db
+    const orderRows = await getDb()
       .select()
       .from(ordersTable)
       .orderBy(desc(ordersTable.createdAt), desc(ordersTable.id));
-    const orderItemRows = await db
+    const orderItemRows = await getDb()
       .select()
       .from(orderItemsTable)
       .orderBy(asc(orderItemsTable.id));
