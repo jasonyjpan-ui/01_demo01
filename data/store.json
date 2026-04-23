@@ -1,13 +1,13 @@
 {
   "users": [
     {
-      "id": 1,
+      "id": "0001",
       "email": "demo@example.com",
       "name": "示範使用者",
       "password": "1234"
     },
     {
-      "id": 2,
+      "id": "0002",
       "email": "amy@example.com",
       "name": "Amy",
       "password": "1234"
@@ -152,7 +152,7 @@
       "total": 160,
       "status": "submitted",
       "createdAt": "2026-04-03T15:49:00.310Z",
-      "userId": 1,
+      "userId": "0001",
       "submittedAt": "2026-04-05T12:45:30.676Z"
     },
     {
@@ -195,7 +195,7 @@
       "total": 175,
       "status": "submitted",
       "createdAt": "2026-04-03T18:13:00.646Z",
-      "userId": 1,
+      "userId": "0001",
       "submittedAt": "2026-04-05T14:28:29.294Z"
     },
     {
@@ -227,7 +227,7 @@
       "total": 105,
       "status": "submitted",
       "createdAt": "2026-04-03T22:36:23.743Z",
-      "userId": 1,
+      "userId": "0001",
       "submittedAt": "2026-04-09T06:13:17.394Z"
     },
     {
@@ -243,12 +243,34 @@
             "image_url": "/imgs/menu/black-tea.webp"
           },
           "qty": 1
+        },
+        {
+          "item": {
+            "id": 8,
+            "name": "奶茶",
+            "price": 30,
+            "category": "飲料",
+            "description": "使用紅茶搭配奶精調和，香濃順口，是最受歡迎的經典飲品。",
+            "image_url": "/imgs/menu/milk-tea.webp"
+          },
+          "qty": 1
+        },
+        {
+          "item": {
+            "id": 2,
+            "name": "起司豬排堡",
+            "price": 65,
+            "category": "餐點",
+            "description": "厚切豬排搭配起司與生菜，外酥內嫩，適合喜歡有咬勁的你。",
+            "image_url": "/imgs/menu/cheese-pork-burger.webp"
+          },
+          "qty": 3
         }
       ],
-      "total": 25,
+      "total": 250,
       "status": "pending",
       "createdAt": "2026-04-03T22:36:53.556Z",
-      "userId": 1
+      "userId": "0001"
     },
     {
       "id": 5,
@@ -279,7 +301,7 @@
       "total": 55,
       "status": "pending",
       "createdAt": "2026-04-03T22:43:05.970Z",
-      "userId": 1
+      "userId": "0001"
     }
   ],
   "userIdCounter": 2,

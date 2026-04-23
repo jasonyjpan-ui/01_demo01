@@ -1,7 +1,6 @@
 import { Elysia, t } from "elysia";
 import { openapi } from "@elysiajs/openapi";
 import { staticPlugin } from "@elysiajs/static";
-import { existsSync } from "node:fs";
 import toTaipeiDateTime from "./util.ts";
 import type { Order, OrderResponse } from "./shared/contracts.ts";
 import { createStore } from "./store/index.ts";
@@ -20,8 +19,6 @@ const host = process.env.HOST || "localhost";
 const allowedOrigin = process.env.API_ALLOWED_ORIGIN || "*";
 const store = createStore({ dataFilePath: "./data/store.json" });
 const auth = createAuth({ dataFilePath: "./data/store.json" });
-const hasPublicAssets =
-  existsSync("./public") && existsSync("./public/index.html");
 
 const apiErrorResponseSchema = t.Object({
   error: t.String(),
@@ -89,14 +86,12 @@ const healthResponseSchema = t.Object({
 
 const app = new Elysia();
 
-if (hasPublicAssets) {
-  app.use(
-    staticPlugin({
-      assets: "public",
-      prefix: "",
-    }),
-  );
-}
+app.use(
+  staticPlugin({
+    assets: "public",
+    prefix: "",
+  }),
+);
 
 app.use(
   openapi({
@@ -586,27 +581,25 @@ app.get("/health", () => ({ status: "ok" }), {
   },
 });
 
-// SPA fallback，只有在前端 build 產物存在時才提供靜態頁面。
-if (hasPublicAssets) {
-  app.get(
-    "*",
-    async ({ request }) => {
-      const pathname = new URL(request.url).pathname;
-      const staticFile = Bun.file(`./public${pathname}`);
+// SPA fallback，未命中 API 或靜態資產時回傳前端入口。
+app.get(
+  "*",
+  async ({ request }) => {
+    const pathname = new URL(request.url).pathname;
+    const staticFile = Bun.file(`./public${pathname}`);
 
-      if (pathname !== "/" && (await staticFile.exists())) {
-        return staticFile;
-      }
+    if (pathname !== "/" && (await staticFile.exists())) {
+      return staticFile;
+    }
 
-      return Bun.file("./public/index.html");
+    return Bun.file("./public/index.html");
+  },
+  {
+    detail: {
+      hide: true,
     },
-    {
-      detail: {
-        hide: true,
-      },
-    },
-  );
-}
+  },
+);
 
 // 全局錯誤處理
 app.onError(({ error, set, code }) => {
@@ -633,9 +626,4 @@ app.listen(port, () => {
   console.log(`📦 訂單 API: http://${host}:${port}/api/orders`);
   console.log(`💚 健康檢查: http://${host}:${port}/health`);
   console.log(`🔐 CORS Origin: ${allowedOrigin}`);
-  if (!hasPublicAssets) {
-    console.log(
-      "⚠️ public/ 不存在，目前只提供 API。若要提供前端頁面，先執行 bun run build:frontend",
-    );
-  }
 });

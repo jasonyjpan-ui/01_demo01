@@ -1,14 +1,16 @@
 import { mkdir, rename } from "node:fs/promises";
-import type {
-  MenuItem,
-  Order,
-  OrderItem,
-  User,
-} from "../../shared/contracts.ts";
+import type { MenuItem, Order, OrderItem } from "../../shared/contracts.ts";
 import type { Store } from "../Store.ts";
 
+interface StoredUser {
+  id: string;
+  email: string;
+  name: string;
+  password: string;
+}
+
 interface DataStore {
-  users: User[];
+  users: StoredUser[];
   menu: MenuItem[];
   orders: Order[];
   userIdCounter: number;
@@ -76,43 +78,54 @@ function normalizeMenuItem(item: Partial<MenuItem>): MenuItem {
   };
 }
 
-function normalizeUser(user: Partial<User>): User {
+function normalizeUserId(rawId: unknown): string {
+  if (typeof rawId === "number" && Number.isInteger(rawId) && rawId > 0) {
+    return String(rawId).padStart(4, "0");
+  }
+
+  if (typeof rawId === "string" && rawId.trim() !== "") {
+    const trimmed = rawId.trim();
+    if (/^\d+$/.test(trimmed)) {
+      return trimmed.padStart(4, "0");
+    }
+    return trimmed;
+  }
+
+  return "0001";
+}
+
+function normalizeUser(user: Partial<StoredUser>): StoredUser {
   return {
-    id: user.id ?? 0,
+    id: normalizeUserId(user.id),
     email: user.email ?? "",
     name: user.name ?? "",
     password: user.password ?? "",
   };
 }
 
-function stripSensitiveUserData(user: User): Omit<User, "password"> {
-  const { password: _password, ...safeUser } = user;
-  return safeUser;
-}
-
-const defaultUsers: User[] = [
+const defaultUsers: StoredUser[] = [
   {
-    id: 1,
+    id: "0001",
     email: "demo@example.com",
     name: "示範使用者",
     password: "1234",
   },
   {
-    id: 2,
+    id: "0002",
     email: "amy@example.com",
     name: "Amy",
     password: "1234",
   },
 ];
 
-function cloneDefaultUsers(): User[] {
+function cloneDefaultUsers(): StoredUser[] {
   return defaultUsers.map((user) => ({ ...user }));
 }
 
 export class JsonFileStore implements Store {
   private readonly dataFilePath: string;
 
-  private users: User[] = [];
+  private users: StoredUser[] = [];
   private menu: MenuItem[] = [];
   private orders: Order[] = [];
   private userIdCounter = 0;
@@ -146,17 +159,14 @@ export class JsonFileStore implements Store {
         ? parsed.users.map((user) => normalizeUser(user))
         : cloneDefaultUsers();
 
-      const fallbackUserId = normalizedUsers[0]?.id ?? 1;
+      const fallbackUserId = normalizedUsers[0]?.id ?? "0001";
 
       this.applyStore({
         users: normalizedUsers,
         menu: parsed.menu.map((item) => normalizeMenuItem(item)),
         orders: parsed.orders.map((order) => ({
           ...order,
-          userId:
-            typeof order.userId === "number" && order.userId > 0
-              ? order.userId
-              : fallbackUserId,
+          userId: normalizeUserId(order.userId ?? fallbackUserId),
           items: order.items.map((orderItem) => ({
             ...orderItem,
             item: normalizeMenuItem(orderItem.item),
@@ -175,35 +185,6 @@ export class JsonFileStore implements Store {
       this.applyStore(initialStore);
       await this.saveStore(initialStore);
     }
-  }
-
-  login(input: {
-    email: string;
-    password: string;
-  }):
-    | { ok: true; user: Omit<User, "password"> }
-    | { ok: false; code: "INVALID_CREDENTIALS" } {
-    const matchedUser = this.users.find(
-      (user) => user.email === input.email && user.password === input.password,
-    );
-
-    if (!matchedUser) {
-      return { ok: false, code: "INVALID_CREDENTIALS" };
-    }
-
-    return {
-      ok: true,
-      user: stripSensitiveUserData(matchedUser),
-    };
-  }
-
-  getUserById(userId: number): Omit<User, "password"> | undefined {
-    const user = this.users.find((targetUser) => targetUser.id === userId);
-    if (!user) {
-      return undefined;
-    }
-
-    return stripSensitiveUserData(user);
   }
 
   getMenu(): ReadonlyArray<MenuItem> {
@@ -274,13 +255,13 @@ export class JsonFileStore implements Store {
     return this.orders;
   }
 
-  getCurrentOrderByUserId(userId: number): Order | undefined {
+  getCurrentOrderByUserId(userId: string): Order | undefined {
     return this.orders.find(
       (order) => order.userId === userId && order.status === "pending",
     );
   }
 
-  getOrderHistoryByUserId(userId: number): ReadonlyArray<Order> {
+  getOrderHistoryByUserId(userId: string): ReadonlyArray<Order> {
     return this.orders
       .filter(
         (order) => order.userId === userId && order.status === "submitted",
@@ -292,7 +273,7 @@ export class JsonFileStore implements Store {
     return this.orders.find((order) => order.id === orderId);
   }
 
-  async createOrder(input: { userId: number }): Promise<Order> {
+  async createOrder(input: { userId: string }): Promise<Order> {
     const newOrder: Order = {
       id: ++this.orderIdCounter,
       userId: input.userId,
@@ -311,7 +292,7 @@ export class JsonFileStore implements Store {
   async updateOrderItem(
     orderId: number,
     input: {
-      userId: number;
+      userId: string;
       itemId: number;
       qty: number;
     },
@@ -368,7 +349,7 @@ export class JsonFileStore implements Store {
 
   async submitOrder(
     orderId: number,
-    input: { userId: number },
+    input: { userId: string },
   ): Promise<
     | { ok: true; order: Order }
     | {
@@ -420,10 +401,10 @@ export class JsonFileStore implements Store {
     this.menu = store.menu;
     this.orders = store.orders;
 
-    const maxUserId = this.users.reduce(
-      (max, user) => Math.max(max, user.id),
-      0,
-    );
+    const maxUserId = this.users.reduce((max, user) => {
+      const asNumber = Number.parseInt(user.id, 10);
+      return Number.isFinite(asNumber) ? Math.max(max, asNumber) : max;
+    }, 0);
 
     const maxMenuId = this.menu.reduce(
       (max, item) => Math.max(max, item.id),

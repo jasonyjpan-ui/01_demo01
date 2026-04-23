@@ -16,6 +16,22 @@ function buildApiUrl(path: string) {
   return `${apiBaseUrl}${path}`;
 }
 
+function normalizeUserId(rawId: unknown): string | null {
+  if (typeof rawId === "string" && rawId.trim() !== "") {
+    const trimmed = rawId.trim();
+    if (/^\d+$/.test(trimmed)) {
+      return trimmed.padStart(4, "0");
+    }
+    return trimmed;
+  }
+
+  if (typeof rawId === "number" && Number.isInteger(rawId) && rawId > 0) {
+    return String(rawId).padStart(4, "0");
+  }
+
+  return null;
+}
+
 export default function App() {
   const [user, setUser] = useState<SafeUser | null>(null);
   const [emailInput, setEmailInput] = useState("demo@example.com");
@@ -57,7 +73,7 @@ export default function App() {
     setCartTotal(0);
   }
 
-  async function loadCurrentOrder(targetUserId: number): Promise<Order | null> {
+  async function loadCurrentOrder(targetUserId: string): Promise<Order | null> {
     const response = await fetch(
       buildApiUrl(`/api/orders/current?userId=${targetUserId}`),
     );
@@ -79,7 +95,7 @@ export default function App() {
     return currentOrder;
   }
 
-  async function loadOrderHistory(targetUserId: number): Promise<void> {
+  async function loadOrderHistory(targetUserId: string): Promise<void> {
     setHistoryLoading(true);
 
     try {
@@ -98,7 +114,7 @@ export default function App() {
     }
   }
 
-  async function refreshUserOrders(targetUserId: number): Promise<void> {
+  async function refreshUserOrders(targetUserId: string): Promise<void> {
     await Promise.all([
       loadCurrentOrder(targetUserId),
       loadOrderHistory(targetUserId),
@@ -112,13 +128,14 @@ export default function App() {
     if (savedUser) {
       try {
         const parsedUser = JSON.parse(savedUser) as Partial<SafeUser>;
+        const normalizedUserId = normalizeUserId(parsedUser.id);
         if (
-          typeof parsedUser.id === "number" &&
+          normalizedUserId &&
           typeof parsedUser.email === "string" &&
           typeof parsedUser.name === "string"
         ) {
           setUser({
-            id: parsedUser.id,
+            id: normalizedUserId,
             email: parsedUser.email,
             name: parsedUser.name,
           });
