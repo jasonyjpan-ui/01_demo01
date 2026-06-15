@@ -7,14 +7,14 @@
     "frontend"
   ],
   "scripts": {
-    "dev": "concurrently \"cd frontend && bun run dev\" \"bun --watch backend.ts\"",
+    "dev": "concurrently \"bun run dev:backend\" \"bun run dev:frontend\"",
     "dev:backend": "bun --watch backend.ts",
-    "dev:frontend": "cd frontend && bun run dev",
-    "build:frontend": "cd frontend && bun run build",
+    "dev:frontend": "cd frontend && npm run dev",
+    "build:frontend": "cd frontend && npm run build",
     "build:backend": "bun build ./backend.ts --outdir ./dist",
     "build": "bun run build:frontend && bun run build:backend",
     "start": "bun dist/backend.js",
-    "preview:frontend": "cd frontend && bun run preview"
+    "preview:frontend": "cd frontend && npm run preview"
   },
   "devDependencies": {
     "@types/bun": "latest",
