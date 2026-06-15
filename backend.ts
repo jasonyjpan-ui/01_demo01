@@ -18,8 +18,18 @@ function toOrderResponse(order: Order): OrderResponse {
 const port = parseInt(process.env.PORT || "3000", 10);
 const host = process.env.HOST || "localhost";
 const allowedOrigin = process.env.API_ALLOWED_ORIGIN || "*";
-const store = createStore({ dataFilePath: "./data/store.json" });
-const auth = createAuth({ dataFilePath: "./data/store.json" });
+// 根據環境變數自動決定要用 JSON 還是 PostgreSQL
+const store = createStore(
+  process.env.STORE_DRIVER === "postgres"
+    ? { connectionString: process.env.DATABASE_URL }
+    : { dataFilePath: "./data/store.json" }
+);
+
+const auth = createAuth(
+  process.env.STORE_DRIVER === "postgres"
+    ? { connectionString: process.env.DATABASE_URL }
+    : { dataFilePath: "./data/store.json" }
+);
 const hasPublicAssets =
   existsSync("./public") && existsSync("./public/index.html");
 
