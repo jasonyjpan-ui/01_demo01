@@ -392,6 +392,7 @@ app.get(
 app.post(
   "/api/orders",
   async ({ body, set }) => {
+    console.log("[DEBUG] /api/orders body", body, typeof body.userId);
     const user = auth.getUserById(body.userId);
     if (!user) {
       set.status = 404;
@@ -400,10 +401,12 @@ app.post(
 
     const existingOrder = store.getCurrentOrderByUserId(body.userId);
     if (existingOrder) {
+      console.log("[DEBUG] existingOrder", existingOrder);
       return { data: toOrderResponse(existingOrder) };
     }
 
     const newOrder = await store.createOrder({ userId: body.userId });
+    console.log("[DEBUG] newOrder", newOrder);
     set.status = 201;
     return { data: toOrderResponse(newOrder) };
   },
