@@ -1,4 +1,4 @@
-import { and, asc, desc, eq, sql } from "drizzle-orm";
+import { and, asc, desc, eq, leftJoin, sql } from "drizzle-orm";
 import type {
   MenuItem,
   Order,
@@ -12,6 +12,7 @@ import {
   ordersTable,
   usersTable,
 } from "../../db/schema.ts";
+import { MenuRepository } from "./MenuRepository.ts";
 import type { Store } from "../Store.ts";
 
 interface PgStoreOptions {
@@ -65,6 +66,7 @@ function normalizeSeedData(seed: SeedStore): Required<SeedStore> {
 
 export class PgStore implements Store {
   private readonly dataFilePath: string;
+  private readonly menuRepository = new MenuRepository();
 
   private users: User[] = [];
   private menu: MenuItem[] = [];
@@ -122,30 +124,7 @@ export class PgStore implements Store {
     description: string;
     image_url: string;
   }): Promise<MenuItem> {
-    const [inserted] = await getDb()
-      .insert(menuItemsTable)
-      .values({
-        name: input.name,
-        price: input.price,
-        category: input.category,
-        description: input.description,
-        imageUrl: input.image_url,
-      })
-      .returning();
-
-    if (!inserted) {
-      throw new Error("Failed to insert menu item");
-    }
-
-    const createdItem: MenuItem = {
-      id: inserted.id,
-      name: inserted.name,
-      price: inserted.price,
-      category: inserted.category,
-      description: inserted.description,
-      image_url: inserted.imageUrl,
-    };
-
+    const createdItem = await this.menuRepository.createMenuItem(input);
     this.menu.push(createdItem);
     return createdItem;
   }
@@ -158,34 +137,13 @@ export class PgStore implements Store {
       category?: string;
       description?: string;
       image_url?: string;
+      version?: number;
     },
   ): Promise<MenuItem | null> {
-    const [updated] = await getDb()
-      .update(menuItemsTable)
-      .set({
-        ...(patch.name !== undefined ? { name: patch.name } : {}),
-        ...(patch.price !== undefined ? { price: patch.price } : {}),
-        ...(patch.category !== undefined ? { category: patch.category } : {}),
-        ...(patch.description !== undefined
-          ? { description: patch.description }
-          : {}),
-        ...(patch.image_url !== undefined ? { imageUrl: patch.image_url } : {}),
-      })
-      .where(eq(menuItemsTable.id, menuId))
-      .returning();
-
-    if (!updated) {
+    const nextItem = await this.menuRepository.updateMenuItem(menuId, patch);
+    if (!nextItem) {
       return null;
     }
-
-    const nextItem: MenuItem = {
-      id: updated.id,
-      name: updated.name,
-      price: updated.price,
-      category: updated.category,
-      description: updated.description,
-      image_url: updated.imageUrl,
-    };
 
     const targetIndex = this.menu.findIndex((item) => item.id === menuId);
     if (targetIndex !== -1) {
@@ -196,23 +154,11 @@ export class PgStore implements Store {
   }
 
   async deleteMenuItem(menuId: number): Promise<MenuItem | null> {
-    const [removed] = await getDb()
-      .delete(menuItemsTable)
-      .where(eq(menuItemsTable.id, menuId))
-      .returning();
+    const removedItem = await this.menuRepository.deleteMenuItem(menuId);
 
-    if (!removed) {
+    if (!removedItem) {
       return null;
     }
-
-    const removedItem: MenuItem = {
-      id: removed.id,
-      name: removed.name,
-      price: removed.price,
-      category: removed.category,
-      description: removed.description,
-      image_url: removed.imageUrl,
-    };
 
     const targetIndex = this.menu.findIndex((item) => item.id === menuId);
     if (targetIndex !== -1) {
@@ -343,7 +289,7 @@ export class PgStore implements Store {
       } else {
         await getDb()
           .update(orderItemsTable)
-          .set({ qty: input.qty })
+          .set({ qty: input.qty, version: menuItem.version })
           .where(
             and(
               eq(orderItemsTable.orderId, orderId),
@@ -353,6 +299,7 @@ export class PgStore implements Store {
         const target = order.items[existingOrderItemIndex];
         if (target) {
           target.qty = input.qty;
+          target.item = { ...menuItem };
         }
       }
     } else if (input.qty > 0) {
@@ -365,6 +312,7 @@ export class PgStore implements Store {
         description: menuItem.description,
         imageUrl: menuItem.image_url,
         qty: input.qty,
+        version: menuItem.version,
       });
 
       order.items.push({
@@ -396,7 +344,8 @@ export class PgStore implements Store {
           | "ORDER_NOT_FOUND"
           | "ORDER_NOT_OWNED"
           | "ORDER_NOT_EDITABLE"
-          | "EMPTY_ORDER";
+          | "EMPTY_ORDER"
+          | "MENU_VERSION_MISMATCH";
       }
   > {
     const order = this.orders.find((targetOrder) => targetOrder.id === orderId);
@@ -415,6 +364,13 @@ export class PgStore implements Store {
 
     if (order.items.length === 0) {
       return { ok: false, code: "EMPTY_ORDER" };
+    }
+
+    for (const orderItem of order.items) {
+      const menuItem = this.menu.find((item) => item.id === orderItem.item.id);
+      if (!menuItem || menuItem.version !== orderItem.item.version) {
+        return { ok: false, code: "MENU_VERSION_MISMATCH" };
+      }
     }
 
     const submittedAt = new Date().toISOString();
@@ -472,6 +428,7 @@ export class PgStore implements Store {
           category: item.category,
           description: item.description,
           imageUrl: item.image_url,
+          version: item.version,
         })),
       );
     }
@@ -498,6 +455,7 @@ export class PgStore implements Store {
               description: orderItem.item.description,
               imageUrl: orderItem.item.image_url,
               qty: orderItem.qty,
+              version: orderItem.item.version,
             })),
           );
         }
@@ -532,8 +490,21 @@ export class PgStore implements Store {
       .from(ordersTable)
       .orderBy(desc(ordersTable.createdAt), desc(ordersTable.id));
     const orderItemRows = await getDb()
-      .select()
+      .select({
+        id: orderItemsTable.id,
+        orderId: orderItemsTable.orderId,
+        itemId: orderItemsTable.itemId,
+        name: orderItemsTable.name,
+        price: orderItemsTable.price,
+        category: orderItemsTable.category,
+        description: orderItemsTable.description,
+        imageUrl: orderItemsTable.imageUrl,
+        qty: orderItemsTable.qty,
+        version: orderItemsTable.version,
+        currentMenuVersion: menuItemsTable.version,
+      })
       .from(orderItemsTable)
+      .leftJoin(menuItemsTable, eq(orderItemsTable.itemId, menuItemsTable.id))
       .orderBy(asc(orderItemsTable.id));
 
     this.users = userRows.map((row) => ({
@@ -550,6 +521,7 @@ export class PgStore implements Store {
       category: row.category,
       description: row.description,
       image_url: row.imageUrl,
+      version: row.version,
     }));
 
     const itemsByOrderId = new Map<number, OrderItem[]>();
@@ -563,6 +535,7 @@ export class PgStore implements Store {
           category: row.category,
           description: row.description,
           image_url: row.imageUrl,
+          version: row.version,
         },
         qty: row.qty,
       });

@@ -20,6 +20,7 @@ export const menuItemsTable = pgTable("menu_items", {
   category: text("category").notNull(),
   description: text("description").notNull(),
   imageUrl: text("image_url").notNull(),
+  version: integer("version").notNull().default(1),
 });
 
 export const ordersTable = pgTable("orders", {
@@ -47,6 +48,7 @@ export const orderItemsTable = pgTable(
     description: text("description").notNull(),
     imageUrl: text("image_url").notNull(),
     qty: integer("qty").notNull(),
+    version: integer("version").notNull().default(1),
   },
   (table) => ({
     orderItemUniqueIdx: uniqueIndex("order_items_order_item_idx").on(

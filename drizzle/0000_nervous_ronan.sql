@@ -4,7 +4,8 @@ CREATE TABLE "menu_items" (
 	"price" integer NOT NULL,
 	"category" text NOT NULL,
 	"description" text NOT NULL,
-	"image_url" text NOT NULL
+	"image_url" text NOT NULL,
+	"version" integer NOT NULL DEFAULT 1
 );
 --> statement-breakpoint
 CREATE TABLE "order_items" (
@@ -16,7 +17,8 @@ CREATE TABLE "order_items" (
 	"category" text NOT NULL,
 	"description" text NOT NULL,
 	"image_url" text NOT NULL,
-	"qty" integer NOT NULL
+	"qty" integer NOT NULL,
+	"version" integer NOT NULL DEFAULT 1
 );
 --> statement-breakpoint
 CREATE TABLE "orders" (

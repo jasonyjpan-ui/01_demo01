@@ -14,7 +14,8 @@
     "build:backend":  "bun build ./backend.ts --outdir ./dist --target node",
     "build": "bun run build:frontend && bun run build:backend",
     "start": "bun dist/backend.js",
-    "preview:frontend": "cd frontend && npm run preview"
+    "preview:frontend": "cd frontend && npm run preview",
+    "test": "bun test"
   },
   "devDependencies": {
     "@types/bun": "latest",

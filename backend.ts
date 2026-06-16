@@ -51,6 +51,7 @@ const menuItemSchema = t.Object({
   category: t.String({ minLength: 1 }),
   description: t.String(),
   image_url: t.String({ minLength: 1 }),
+  version: t.Number({ minimum: 1 }),
 });
 
 const orderItemSchema = t.Object({
@@ -247,11 +248,18 @@ app.patch(
   "/api/menu/:id",
   async ({ params, body, set }) => {
     const menuId = parseInt(params.id);
+    const existingMenuItem = store.getMenu().find((item) => item.id === menuId);
+
+    if (!existingMenuItem) {
+      set.status = 404;
+      return { error: "Menu item not found" };
+    }
+
     const menuItem = await store.updateMenuItem(menuId, body);
 
     if (!menuItem) {
-      set.status = 404;
-      return { error: "Menu item not found" };
+      set.status = 409;
+      return { error: "Menu item version mismatch" };
     }
 
     return { data: menuItem };
@@ -266,6 +274,7 @@ app.patch(
       category: t.Optional(t.String({ minLength: 1 })),
       description: t.Optional(t.String({ minLength: 1 })),
       image_url: t.Optional(t.String({ minLength: 1 })),
+      version: t.Optional(t.Integer({ minimum: 1 })),
     }),
     detail: {
       tags: ["menu"],
@@ -275,6 +284,21 @@ app.patch(
     response: {
       200: menuItemResponseSchema,
       404: apiErrorResponseSchema,
+    },
+  },
+);
+
+app.get(
+  "/api/menu/current",
+  () => ({ data: [...store.getMenu()] }),
+  {
+    detail: {
+      tags: ["menu"],
+      summary: "Get current menu",
+      description: "Return the current menu with versioned menu items.",
+    },
+    response: {
+      200: menuListResponseSchema,
     },
   },
 );
@@ -550,6 +574,11 @@ app.post(
     if (!result.ok && result.code === "ORDER_NOT_EDITABLE") {
       set.status = 409;
       return { error: "Order already submitted" };
+    }
+
+    if (!result.ok && result.code === "MENU_VERSION_MISMATCH") {
+      set.status = 409;
+      return { error: "Menu version mismatch: order contains stale item data" };
     }
 
     if (!result.ok && result.code === "EMPTY_ORDER") {
