@@ -11,7 +11,7 @@
     "dev:backend": "bun --watch backend.ts",
     "dev:frontend": "cd frontend && npm run dev",
     "build:frontend": "cd frontend && npm run build",
-    "build:backend":  "bun build ./backend.ts --outdir ./dist",
+    "build:backend":  "bun build ./backend.ts --outdir ./dist --target node",
     "build": "bun run build:frontend && bun run build:backend",
     "start": "bun dist/backend.js",
     "preview:frontend": "cd frontend && npm run preview"
