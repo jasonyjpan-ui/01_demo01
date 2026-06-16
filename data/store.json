@@ -275,31 +275,8 @@
     },
     {
       "id": 5,
-      "items": [
-        {
-          "item": {
-            "id": 8,
-            "name": "奶茶",
-            "price": 30,
-            "category": "飲料",
-            "description": "使用紅茶搭配奶精調和，香濃順口，是最受歡迎的經典飲品。",
-            "image_url": "/imgs/menu/milk-tea.webp"
-          },
-          "qty": 1
-        },
-        {
-          "item": {
-            "id": 7,
-            "name": "紅茶",
-            "price": 25,
-            "category": "飲料",
-            "description": "古早味紅茶，微糖微冰為店內推薦比例，適合作為早餐基本配備。",
-            "image_url": "/imgs/menu/black-tea.webp"
-          },
-          "qty": 1
-        }
-      ],
-      "total": 55,
+      "items": [],
+      "total": 0,
       "status": "pending",
       "createdAt": "2026-04-03T22:43:05.970Z",
       "userId": "0001"

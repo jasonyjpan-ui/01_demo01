@@ -256,15 +256,23 @@ export class JsonFileStore implements Store {
   }
 
   getCurrentOrderByUserId(userId: string): Order | undefined {
+    const normalizedUserId = normalizeUserId(userId);
+
     return this.orders.find(
-      (order) => order.userId === userId && order.status === "pending",
+      (order) =>
+        normalizeUserId(order.userId) === normalizedUserId &&
+        order.status === "pending",
     );
   }
 
   getOrderHistoryByUserId(userId: string): ReadonlyArray<Order> {
+    const normalizedUserId = normalizeUserId(userId);
+
     return this.orders
       .filter(
-        (order) => order.userId === userId && order.status === "submitted",
+        (order) =>
+          normalizeUserId(order.userId) === normalizedUserId &&
+          order.status === "submitted",
       )
       .sort((a, b) => b.createdAt.localeCompare(a.createdAt));
   }
@@ -274,9 +282,10 @@ export class JsonFileStore implements Store {
   }
 
   async createOrder(input: { userId: string }): Promise<Order> {
+    const normalizedUserId = normalizeUserId(input.userId);
     const newOrder: Order = {
       id: ++this.orderIdCounter,
-      userId: input.userId,
+      userId: normalizedUserId,
       items: [],
       total: 0,
       status: "pending",
@@ -312,7 +321,10 @@ export class JsonFileStore implements Store {
       return { ok: false, code: "ORDER_NOT_FOUND" };
     }
 
-    if (order.userId !== input.userId) {
+    const normalizedOrderUserId = normalizeUserId(order.userId);
+    const normalizedInputUserId = normalizeUserId(input.userId);
+
+    if (normalizedOrderUserId !== normalizedInputUserId) {
       return { ok: false, code: "ORDER_NOT_OWNED" };
     }
 
@@ -366,7 +378,10 @@ export class JsonFileStore implements Store {
       return { ok: false, code: "ORDER_NOT_FOUND" };
     }
 
-    if (order.userId !== input.userId) {
+    const normalizedOrderUserId = normalizeUserId(order.userId);
+    const normalizedInputUserId = normalizeUserId(input.userId);
+
+    if (normalizedOrderUserId !== normalizedInputUserId) {
       return { ok: false, code: "ORDER_NOT_OWNED" };
     }
 

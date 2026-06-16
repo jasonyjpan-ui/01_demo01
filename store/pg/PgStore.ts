@@ -41,6 +41,20 @@ function calculateTotal(items: ReadonlyArray<OrderItem>): number {
   return items.reduce((sum, item) => sum + item.item.price * item.qty, 0);
 }
 
+function parseUserId(userId: string): number | undefined {
+  const parsed = Number(userId);
+  return Number.isInteger(parsed) && parsed > 0 ? parsed : undefined;
+}
+
+function normalizeUserId(userId: string): string {
+  const numericId = parseUserId(userId);
+  if (numericId !== undefined) {
+    return String(numericId).padStart(4, "0");
+  }
+
+  return userId.trim();
+}
+
 function normalizeSeedData(seed: SeedStore): Required<SeedStore> {
   return {
     users: Array.isArray(seed.users) ? seed.users : [],
@@ -87,8 +101,9 @@ export class PgStore implements Store {
     };
   }
 
-  getUserById(userId: number): Omit<User, "password"> | undefined {
-    const user = this.users.find((targetUser) => targetUser.id === userId);
+  getUserById(userId: string): Omit<User, "password"> | undefined {
+    const normalizedUserId = normalizeUserId(userId);
+    const user = this.users.find((targetUser) => targetUser.id === normalizedUserId);
     if (!user) {
       return undefined;
     }
@@ -211,16 +226,18 @@ export class PgStore implements Store {
     return this.orders;
   }
 
-  getCurrentOrderByUserId(userId: number): Order | undefined {
+  getCurrentOrderByUserId(userId: string): Order | undefined {
+    const normalizedUserId = normalizeUserId(userId);
     return this.orders.find(
-      (order) => order.userId === userId && order.status === "pending",
+      (order) => order.userId === normalizedUserId && order.status === "pending",
     );
   }
 
-  getOrderHistoryByUserId(userId: number): ReadonlyArray<Order> {
+  getOrderHistoryByUserId(userId: string): ReadonlyArray<Order> {
+    const normalizedUserId = normalizeUserId(userId);
     return this.orders
       .filter(
-        (order) => order.userId === userId && order.status === "submitted",
+        (order) => order.userId === normalizedUserId && order.status === "submitted",
       )
       .sort((a, b) => b.createdAt.localeCompare(a.createdAt));
   }
@@ -229,13 +246,17 @@ export class PgStore implements Store {
     return this.orders.find((order) => order.id === orderId);
   }
 
-  async createOrder(input: { userId: number }): Promise<Order> {
+  async createOrder(input: { userId: string }): Promise<Order> {
+    const numericId = parseUserId(input.userId);
+    if (numericId === undefined) {
+      throw new Error("Invalid userId");
+    }
     const createdAt = new Date();
 
     const [inserted] = await getDb()
       .insert(ordersTable)
       .values({
-        userId: input.userId,
+        userId: numericId,
         status: "pending",
         total: 0,
         createdAt,
@@ -248,7 +269,7 @@ export class PgStore implements Store {
 
     const order: Order = {
       id: inserted.id,
-      userId: inserted.userId,
+      userId: normalizeUserId(input.userId),
       items: [],
       total: inserted.total,
       status: inserted.status === "submitted" ? "submitted" : "pending",
@@ -270,7 +291,7 @@ export class PgStore implements Store {
   async updateOrderItem(
     orderId: number,
     input: {
-      userId: number;
+      userId: string;
       itemId: number;
       qty: number;
     },
@@ -290,7 +311,8 @@ export class PgStore implements Store {
       return { ok: false, code: "ORDER_NOT_FOUND" };
     }
 
-    if (order.userId !== input.userId) {
+    const normalizedInputUserId = normalizeUserId(input.userId);
+    if (order.userId !== normalizedInputUserId) {
       return { ok: false, code: "ORDER_NOT_OWNED" };
     }
 
@@ -365,7 +387,7 @@ export class PgStore implements Store {
 
   async submitOrder(
     orderId: number,
-    input: { userId: number },
+    input: { userId: string },
   ): Promise<
     | { ok: true; order: Order }
     | {
@@ -382,7 +404,8 @@ export class PgStore implements Store {
       return { ok: false, code: "ORDER_NOT_FOUND" };
     }
 
-    if (order.userId !== input.userId) {
+    const normalizedInputUserId = normalizeUserId(input.userId);
+    if (order.userId !== normalizedInputUserId) {
       return { ok: false, code: "ORDER_NOT_OWNED" };
     }
 
@@ -514,7 +537,7 @@ export class PgStore implements Store {
       .orderBy(asc(orderItemsTable.id));
 
     this.users = userRows.map((row) => ({
-      id: row.id,
+      id: String(row.id).padStart(4, "0"),
       email: row.email,
       name: row.name,
       password: row.password,
@@ -548,7 +571,7 @@ export class PgStore implements Store {
 
     this.orders = orderRows.map((row) => ({
       id: row.id,
-      userId: row.userId,
+      userId: String(row.userId).padStart(4, "0"),
       items: itemsByOrderId.get(row.id) ?? [],
       total: row.total,
       status: row.status === "submitted" ? "submitted" : "pending",
