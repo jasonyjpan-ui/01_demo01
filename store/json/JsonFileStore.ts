@@ -228,6 +228,7 @@ export class JsonFileStore implements Store {
       description?: string;
       image_url?: string;
       version?: number;
+      changeReason?: string;
     },
   ): Promise<MenuItem | null> {
     const menuItem = this.menu.find((item) => item.id === menuId);
@@ -239,16 +240,48 @@ export class JsonFileStore implements Store {
       return null;
     }
 
+    const oldPrice = menuItem.price;
     menuItem.name = patch.name ?? menuItem.name;
     menuItem.price = patch.price ?? menuItem.price;
     menuItem.category = patch.category ?? menuItem.category;
     menuItem.description = patch.description ?? menuItem.description;
     menuItem.image_url = patch.image_url ?? menuItem.image_url;
+    if (patch.changeReason !== undefined) {
+      (menuItem as any).changeReason = patch.changeReason;
+    }
+    if (patch.price !== undefined && patch.price !== oldPrice) {
+      (menuItem as any).previousPrice = oldPrice;
+    }
     menuItem.version = menuItem.version + 1;
 
     await this.persist();
 
     return menuItem;
+  }
+
+  async getMenuItemHistory?(
+    menuId: number,
+  ): Promise<Array<{
+    version: number;
+    name: string;
+    price: number;
+    previousPrice?: number;
+    changeReason?: string;
+    changedAt?: string;
+  }>> {
+    const menuItem = this.menu.find((item) => item.id === menuId);
+    if (!menuItem) {
+      return [];
+    }
+
+    return [{
+      version: menuItem.version,
+      name: menuItem.name,
+      price: menuItem.price,
+      previousPrice: (menuItem as any).previousPrice,
+      changeReason: (menuItem as any).changeReason,
+      changedAt: undefined, // JSON store 不記錄時間戳
+    }];
   }
 
   async deleteMenuItem(menuId: number): Promise<MenuItem | null> {

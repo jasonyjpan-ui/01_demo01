@@ -47,15 +47,33 @@ export class MenuRepository {
       description?: string;
       image_url?: string;
       version?: number;
+      changeReason?: string;
     },
   ): Promise<MenuItem | null> {
+    // 先查詢原始菜單項目以獲得舊價格
+    const [original] = await getDb()
+      .select()
+      .from(menuItemsTable)
+      .where(eq(menuItemsTable.id, menuId));
+
+    if (!original) {
+      return null;
+    }
+
     const updates: Record<string, unknown> = {
       ...(patch.name !== undefined ? { name: patch.name } : {}),
       ...(patch.price !== undefined ? { price: patch.price } : {}),
       ...(patch.category !== undefined ? { category: patch.category } : {}),
       ...(patch.description !== undefined ? { description: patch.description } : {}),
       ...(patch.image_url !== undefined ? { imageUrl: patch.image_url } : {}),
+      ...(patch.changeReason !== undefined ? { changeReason: patch.changeReason } : {}),
+      changedAt: new Date(),
     };
+
+    // 記錄前一個價格
+    if (patch.price !== undefined && patch.price !== original.price) {
+      updates.previousPrice = original.price;
+    }
 
     if (patch.version !== undefined) {
       updates.version = patch.version + 1;
@@ -81,6 +99,9 @@ export class MenuRepository {
       description: updated.description,
       image_url: updated.imageUrl,
       version: updated.version,
+      changeReason: updated.changeReason || undefined,
+      previousPrice: updated.previousPrice || undefined,
+      changedAt: updated.changedAt?.toISOString(),
     };
   }
 

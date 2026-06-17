@@ -138,6 +138,7 @@ export class PgStore implements Store {
       description?: string;
       image_url?: string;
       version?: number;
+      changeReason?: string;
     },
   ): Promise<MenuItem | null> {
     const nextItem = await this.menuRepository.updateMenuItem(menuId, patch);
@@ -151,6 +152,37 @@ export class PgStore implements Store {
     }
 
     return nextItem;
+  }
+
+  async getMenuItemHistory(menuId: number): Promise<Array<{
+    version: number;
+    name: string;
+    price: number;
+    previousPrice?: number;
+    changeReason?: string;
+    changedAt?: string;
+  }>> {
+    // 方案：由於 PostgreSQL 中沒有版本歷史表，我們使用簡化方案
+    // 僅返回當前項目的版本和變更資訊
+    // 在生產環境中應該有單獨的歷史表
+    const item = await getDb()
+      .select()
+      .from(menuItemsTable)
+      .where(eq(menuItemsTable.id, menuId));
+
+    if (item.length === 0) {
+      return [];
+    }
+
+    const current = item[0];
+    return [{
+      version: current.version,
+      name: current.name,
+      price: current.price,
+      previousPrice: current.previousPrice || undefined,
+      changeReason: current.changeReason || undefined,
+      changedAt: current.changedAt?.toISOString(),
+    }];
   }
 
   async deleteMenuItem(menuId: number): Promise<MenuItem | null> {

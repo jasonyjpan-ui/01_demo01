@@ -33,9 +33,18 @@ export interface Store {
       description?: string;
       image_url?: string;
       version?: number;
+      changeReason?: string;
     },
   ): Promise<MenuItem | null>;
   deleteMenuItem(menuId: number): Promise<MenuItem | null>;
+  getMenuItemHistory?(menuId: number): Promise<Array<{
+    version: number;
+    name: string;
+    price: number;
+    previousPrice?: number;
+    changeReason?: string;
+    changedAt?: string;
+  }>>;
 
   getOrders(): ReadonlyArray<Order>;
   getCurrentOrderByUserId(userId: string): Order | undefined;

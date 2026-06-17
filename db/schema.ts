@@ -21,6 +21,9 @@ export const menuItemsTable = pgTable("menu_items", {
   description: text("description").notNull(),
   imageUrl: text("image_url").notNull(),
   version: integer("version").notNull().default(1),
+  changeReason: text("change_reason"),
+  previousPrice: integer("previous_price"),
+  changedAt: timestamp("changed_at", { withTimezone: true }),
 });
 
 export const ordersTable = pgTable("orders", {

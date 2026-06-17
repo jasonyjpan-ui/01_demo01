@@ -6,6 +6,19 @@ export interface MenuItem {
   description: string;
   image_url: string;
   version: number;
+  changeReason?: string;
+  previousPrice?: number;
+  changedAt?: string;
+}
+
+export interface MenuItemHistory {
+  id: number;
+  version: number;
+  name: string;
+  price: number;
+  previousPrice?: number;
+  changeReason?: string;
+  changedAt?: string;
 }
 
 export interface User {

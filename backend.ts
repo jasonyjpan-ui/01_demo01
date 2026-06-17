@@ -275,6 +275,7 @@ app.patch(
       description: t.Optional(t.String({ minLength: 1 })),
       image_url: t.Optional(t.String({ minLength: 1 })),
       version: t.Optional(t.Integer({ minimum: 1 })),
+      changeReason: t.Optional(t.String({ minLength: 1 })),
     }),
     detail: {
       tags: ["menu"],
@@ -299,6 +300,55 @@ app.get(
     },
     response: {
       200: menuListResponseSchema,
+    },
+  },
+);
+
+// 版本歷史查詢 API
+app.get(
+  "/api/menu/:id/history",
+  async ({ params, set }) => {
+    const menuId = parseInt(params.id);
+    
+    if (store.getMenuItemHistory) {
+      try {
+        const history = await store.getMenuItemHistory(menuId);
+        if (history.length === 0) {
+          set.status = 404;
+          return { error: "Menu item not found" };
+        }
+        return { data: history };
+      } catch (error) {
+        set.status = 500;
+        return { error: "Failed to retrieve menu history" };
+      }
+    }
+
+    set.status = 501;
+    return { error: "Menu history not supported in this storage backend" };
+  },
+  {
+    params: t.Object({
+      id: t.String({ pattern: "^[0-9]+$" }),
+    }),
+    detail: {
+      tags: ["menu"],
+      summary: "Get menu item version history",
+      description: "Return the version history of a menu item (for staff/admin).",
+    },
+    response: {
+      200: t.Object({
+        data: t.Array(t.Object({
+          version: t.Number(),
+          name: t.String(),
+          price: t.Number(),
+          previousPrice: t.Optional(t.Number()),
+          changeReason: t.Optional(t.String()),
+          changedAt: t.Optional(t.String()),
+        })),
+      }),
+      404: apiErrorResponseSchema,
+      501: apiErrorResponseSchema,
     },
   },
 );
@@ -578,6 +628,30 @@ app.post(
 
     if (!result.ok && result.code === "MENU_VERSION_MISMATCH") {
       set.status = 409;
+      // 返回詳細的版本不匹配信息
+      const order = store.getCurrentOrderByUserId(body.userId);
+      if (order) {
+        const staleItems = order.items
+          .filter((orderItem) => {
+            const currentMenu = store.getMenu().find((m) => m.id === orderItem.item.id);
+            return !currentMenu || currentMenu.version !== orderItem.item.version;
+          })
+          .map((oi) => ({
+            id: oi.item.id,
+            name: oi.item.name,
+            orderedPrice: oi.item.price,
+            currentPrice: store.getMenu().find((m) => m.id === oi.item.id)?.price,
+            reason: "菜單已更新",
+          }));
+        
+        return {
+          error: "Menu version mismatch: order contains stale item data",
+          details: {
+            staleItems,
+            message: "以下項目價格或資訊已變動，請重新確認訂單",
+          },
+        };
+      }
       return { error: "Menu version mismatch: order contains stale item data" };
     }
 

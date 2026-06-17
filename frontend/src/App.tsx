@@ -6,6 +6,8 @@ import type {
   Order,
   User,
 } from "../../shared/contracts.ts";
+import { CartValidation } from "./CartValidation";
+import { OrderSubmitError } from "./OrderSubmitError";
 
 const apiBaseUrl = (import.meta.env.VITE_API_BASE_URL || "").replace(/\/$/, "");
 const USER_STORAGE_KEY = "breakfast.user";
@@ -53,6 +55,20 @@ export default function App() {
   const [isCartOpen, setIsCartOpen] = useState(false);
   const [isClearingCart, setIsClearingCart] = useState(false);
   const [isSubmittingOrder, setIsSubmittingOrder] = useState(false);
+  const [submitError, setSubmitError] = useState<{
+    error: string;
+    details?: {
+      staleItems?: Array<{
+        id: number;
+        name: string;
+        orderedPrice: number;
+        currentPrice?: number;
+        reason: string;
+      }>;
+      message?: string;
+    };
+  } | null>(null);
+  const [currentOrder, setCurrentOrder] = useState<Order | null>(null);
 
   function syncCartFromOrder(order: Order) {
     const nextQtyByItemId = order.items.reduce(
@@ -87,10 +103,12 @@ export default function App() {
 
     if (!currentOrder) {
       resetCartState();
+      setCurrentOrder(null);
       return null;
     }
 
     setOrderId(currentOrder.id);
+    setCurrentOrder(currentOrder);
     syncCartFromOrder(currentOrder);
     return currentOrder;
   }
@@ -432,6 +450,7 @@ export default function App() {
     }
 
     setActionError("");
+    setSubmitError(null);
     setIsSubmittingOrder(true);
 
     try {
@@ -445,17 +464,94 @@ export default function App() {
       );
 
       if (!response.ok) {
-        throw new Error(`Submit order failed: HTTP ${response.status}`);
+        // 解析詳細的錯誤信息
+        const errorPayload = await response.json() as any;
+        
+        if (response.status === 409 && errorPayload.details) {
+          // 版本不匹配 - 提供詳細信息
+          setSubmitError({
+            error: errorPayload.error || "Menu version mismatch: order contains stale item data",
+            details: errorPayload.details,
+          });
+        } else if (response.status === 400 && errorPayload.error) {
+          setActionError(errorPayload.error);
+        } else {
+          throw new Error(`Submit order failed: HTTP ${response.status}`);
+        }
+        return;
       }
 
-      resetCartState();
-      setIsCartOpen(false);
-      await loadOrderHistory(user.id);
+      const payload = (await response.json()) as ApiDataResponse<Order>;
+      if (payload?.data) {
+        resetCartState();
+        setIsCartOpen(false);
+        await loadOrderHistory(user.id);
+      }
     } catch (submitError) {
-      setActionError("送出訂單失敗，請稍後再試。");
       console.error(submitError);
+      if (!submitError || !(submitError instanceof Error) || !submitError.message.includes("Menu version mismatch")) {
+        setActionError("送出訂單失敗，請稍後再試。");
+      }
     } finally {
       setIsSubmittingOrder(false);
+    }
+  }
+
+  async function handleRemoveStaleItems(): Promise<void> {
+    if (!user || !currentOrder) return;
+
+    // 找出失效項目並移除
+    const staleItemIds = new Set<number>();
+    currentOrder.items.forEach((orderItem) => {
+      const currentMenu = items.find((m) => m.id === orderItem.item.id);
+      if (!currentMenu || currentMenu.version !== orderItem.item.version) {
+        staleItemIds.add(orderItem.item.id);
+      }
+    });
+
+    for (const itemId of staleItemIds) {
+      try {
+        const response = await fetch(
+          buildApiUrl(`/api/orders/${orderId}`),
+          {
+            method: "PATCH",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({
+              userId: user.id,
+              itemId,
+              qty: 0,
+            }),
+          },
+        );
+
+        if (!response.ok) {
+          throw new Error(`Remove stale item failed: HTTP ${response.status}`);
+        }
+
+        const payload = (await response.json()) as ApiDataResponse<Order>;
+        if (payload?.data) {
+          setCurrentOrder(payload.data);
+          syncCartFromOrder(payload.data);
+        }
+      } catch (error) {
+        console.error(`Failed to remove item ${itemId}:`, error);
+      }
+    }
+
+    // 清除錯誤提示
+    setSubmitError(null);
+  }
+
+  async function handleRefreshMenuFromError(): Promise<void> {
+    if (!user) return;
+
+    try {
+      await loadMenu();
+      await loadCurrentOrder(user.id);
+      setSubmitError(null);
+    } catch (error) {
+      console.error("Failed to refresh menu:", error);
+      setActionError("刷新菜單失敗，請稍後再試。");
     }
   }
 
@@ -697,22 +793,30 @@ export default function App() {
                   <span>購物車目前是空的。</span>
                 </div>
               ) : (
-                <ul className="space-y-3">
-                  {cartDetails.map((detail) => (
-                    <li
-                      key={detail.itemId}
-                      className="p-3 rounded-lg bg-base-200 flex items-center justify-between"
-                    >
-                      <div>
-                        <p className="font-semibold">{detail.item.name}</p>
-                        <p className="text-sm opacity-70">
-                          單價 ${detail.item.price} x {detail.qty}
-                        </p>
-                      </div>
-                      <p className="font-bold">${detail.subtotal}</p>
-                    </li>
-                  ))}
-                </ul>
+                <>
+                  <CartValidation
+                    order={currentOrder}
+                    menu={items}
+                    onRemoveStaleItems={handleRemoveStaleItems}
+                    onRefreshMenu={handleRefreshMenuFromError}
+                  />
+                  <ul className="space-y-3">
+                    {cartDetails.map((detail) => (
+                      <li
+                        key={detail.itemId}
+                        className="p-3 rounded-lg bg-base-200 flex items-center justify-between"
+                      >
+                        <div>
+                          <p className="font-semibold">{detail.item.name}</p>
+                          <p className="text-sm opacity-70">
+                            單價 ${detail.item.price} x {detail.qty}
+                          </p>
+                        </div>
+                        <p className="font-bold">${detail.subtotal}</p>
+                      </li>
+                    ))}
+                  </ul>
+                </>
               )}
             </div>
 
@@ -747,6 +851,14 @@ export default function App() {
           </aside>
         </>
       ) : null}
+
+      {/* 訂單提交錯誤模態框 */}
+      <OrderSubmitError
+        error={submitError}
+        order={currentOrder}
+        onDismiss={() => setSubmitError(null)}
+        onRetryRefresh={handleRefreshMenuFromError}
+      />
     </div>
   );
 }
