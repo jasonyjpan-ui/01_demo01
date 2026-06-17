@@ -58,6 +58,7 @@ export default function App() {
   const [authError, setAuthError] = useState("");
   const [isLoggingIn, setIsLoggingIn] = useState(false);
   const [items, setItems] = useState<MenuItem[]>([]);
+  const [archivedItems, setArchivedItems] = useState<MenuItem[]>([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState("");
   const [orderId, setOrderId] = useState<number | null>(null);
@@ -125,6 +126,18 @@ export default function App() {
     const payload = (await response.json()) as ApiDataResponse<MenuItem[]>;
     const fetchedItems = Array.isArray(payload?.data) ? payload.data : [];
     setItems(fetchedItems);
+    return fetchedItems;
+  }
+
+  async function loadArchivedMenu(): Promise<MenuItem[]> {
+    const response = await fetch(buildApiUrl("/api/menu/archived"));
+    if (!response.ok) {
+      throw new Error(`Load archived menu failed: HTTP ${response.status}`);
+    }
+
+    const payload = (await response.json()) as ApiDataResponse<MenuItem[]>;
+    const fetchedItems = Array.isArray(payload?.data) ? payload.data : [];
+    setArchivedItems(fetchedItems);
     return fetchedItems;
   }
 
@@ -200,7 +213,7 @@ export default function App() {
       }
     }
 
-    loadMenu()
+    Promise.all([loadMenu(), loadArchivedMenu()])
       .catch((fetchError) => {
         if (mounted) {
           setError("菜單讀取失敗，請稍後再試。");
@@ -689,6 +702,7 @@ export default function App() {
       }
 
       await loadMenu();
+      await loadArchivedMenu();
       if (user) {
         await loadCurrentOrder(user.id);
       }
@@ -743,6 +757,7 @@ export default function App() {
       }
 
       await loadMenu();
+      await loadArchivedMenu();
       if (user) {
         await loadCurrentOrder(user.id);
       }
@@ -752,6 +767,45 @@ export default function App() {
         deleteError instanceof Error
           ? `菜單下架失敗：${deleteError.message}`
           : "菜單下架失敗。",
+      );
+    } finally {
+      setMenuActionId(null);
+    }
+  }
+
+  async function restoreMenuItem(item: MenuItem): Promise<void> {
+    setMenuActionId(item.id);
+    setActionError("");
+
+    try {
+      const response = await fetch(buildApiUrl(`/api/menu/${item.id}/restore`), {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          changeReason: `重新上架：還原自 v${item.version}`,
+        }),
+      });
+      const payload = await response.json();
+
+      if (!response.ok) {
+        throw new Error(payload?.error || `HTTP ${response.status}`);
+      }
+
+      await loadMenu();
+      await loadArchivedMenu();
+      if (user) {
+        await loadCurrentOrder(user.id);
+      }
+
+      if (menuHistoryItem) {
+        await openMenuHistory(payload.data);
+      }
+    } catch (restoreError) {
+      console.error(restoreError);
+      setActionError(
+        restoreError instanceof Error
+          ? `菜單還原失敗：${restoreError.message}`
+          : "菜單還原失敗。",
       );
     } finally {
       setMenuActionId(null);
@@ -972,6 +1026,70 @@ export default function App() {
             </section>
           ))
         )}
+
+        <section className="mt-10">
+          <div className="mb-4 flex flex-wrap items-center justify-between gap-2">
+            <h2 className="text-2xl font-bold">已下架品項</h2>
+            <button
+              type="button"
+              className="btn btn-sm btn-outline"
+              onClick={() => {
+                void loadArchivedMenu();
+              }}
+            >
+              重新整理
+            </button>
+          </div>
+          {archivedItems.length === 0 ? (
+            <div className="alert alert-info">
+              <span>目前沒有下架品項。</span>
+            </div>
+          ) : (
+            <div className="grid grid-cols-1 gap-3 md:grid-cols-2 lg:grid-cols-3">
+              {archivedItems.map((item) => (
+                <article
+                  key={item.id}
+                  className="rounded border border-base-300 bg-base-100 p-4 shadow-sm"
+                >
+                  <div className="flex flex-wrap items-start justify-between gap-2">
+                    <div>
+                      <h3 className="font-semibold">{item.name}</h3>
+                      <p className="text-sm opacity-70">
+                        品項 #{item.logicalId ?? item.id}・最後版本 v{item.version}
+                      </p>
+                    </div>
+                    <span className="badge badge-ghost">已下架</span>
+                  </div>
+                  <p className="mt-2 text-sm opacity-80">{item.description}</p>
+                  <div className="mt-3 flex items-center justify-between">
+                    <span className="font-bold text-success">${item.price}</span>
+                    <div className="flex gap-2">
+                      <button
+                        type="button"
+                        className="btn btn-xs btn-outline"
+                        onClick={() => {
+                          void openMenuHistory(item);
+                        }}
+                      >
+                        版本
+                      </button>
+                      <button
+                        type="button"
+                        className="btn btn-xs btn-primary"
+                        disabled={menuActionId === item.id}
+                        onClick={() => {
+                          void restoreMenuItem(item);
+                        }}
+                      >
+                        重新上架
+                      </button>
+                    </div>
+                  </div>
+                </article>
+              ))}
+            </div>
+          )}
+        </section>
 
         {user ? (
           <section className="mt-10">
@@ -1233,6 +1351,20 @@ export default function App() {
                         <p className="mt-2 rounded bg-base-100 px-2 py-1 text-sm">
                           變更原因：{historyItem.changeReason}
                         </p>
+                      ) : null}
+                      {!historyItem.isCurrentVersion ? (
+                        <div className="mt-3 flex justify-end">
+                          <button
+                            type="button"
+                            className="btn btn-xs btn-primary btn-outline"
+                            disabled={menuActionId === historyItem.id}
+                            onClick={() => {
+                              void restoreMenuItem(historyItem);
+                            }}
+                          >
+                            還原此版本
+                          </button>
+                        </div>
                       ) : null}
                     </li>
                   ))}

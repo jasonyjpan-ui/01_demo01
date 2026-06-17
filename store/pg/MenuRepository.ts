@@ -143,4 +143,84 @@ export class MenuRepository {
 
     return removed ? toMenuItem(removed) : null;
   }
+
+  async restoreMenuItem(
+    menuId: number,
+    input: { changeReason?: string } = {},
+  ): Promise<MenuItem | null> {
+    return await getDb().transaction(async (tx) => {
+      const [source] = await tx
+        .select()
+        .from(menuItemsTable)
+        .where(eq(menuItemsTable.id, menuId));
+
+      if (!source) {
+        return null;
+      }
+
+      const versions = await tx
+        .select()
+        .from(menuItemsTable)
+        .where(eq(menuItemsTable.logicalId, source.logicalId));
+
+      const current = versions.find((item) => item.isCurrentVersion);
+      const latestVersion = Math.max(...versions.map((item) => item.version));
+      const changedAt = new Date();
+
+      if (current) {
+        await tx
+          .update(menuItemsTable)
+          .set({ isCurrentVersion: false, changedAt })
+          .where(eq(menuItemsTable.id, current.id));
+      }
+
+      const [inserted] = await tx
+        .insert(menuItemsTable)
+        .values({
+          logicalId: source.logicalId,
+          entityId: source.entityId,
+          name: source.name,
+          price: source.price,
+          category: source.category,
+          description: source.description,
+          imageUrl: source.imageUrl,
+          version: latestVersion + 1,
+          isCurrentVersion: true,
+          supersedes: current?.id ?? source.id,
+          changeReason:
+            input.changeReason ?? `Restore from version ${source.version}`,
+          previousPrice:
+            current && current.price !== source.price
+              ? current.price
+              : source.previousPrice,
+          createdAt: changedAt,
+          changedAt,
+        })
+        .returning();
+
+      return inserted ? toMenuItem(inserted) : null;
+    });
+  }
+
+  async getArchivedMenuItems(): Promise<MenuItem[]> {
+    const rows = await getDb().select().from(menuItemsTable);
+    const byLogicalId = new Map<number, typeof rows>();
+
+    for (const row of rows) {
+      byLogicalId.set(row.logicalId, [
+        ...(byLogicalId.get(row.logicalId) ?? []),
+        row,
+      ]);
+    }
+
+    return [...byLogicalId.values()]
+      .filter((versions) => versions.every((row) => !row.isCurrentVersion))
+      .map((versions) =>
+        versions.reduce((latest, row) =>
+          row.version > latest.version ? row : latest,
+        ),
+      )
+      .map(toMenuItem)
+      .sort((a, b) => a.name.localeCompare(b.name, "zh-Hant"));
+  }
 }

@@ -167,4 +167,34 @@ describe("JsonFileStore versioned menu behavior", () => {
       expect(removeResult.order.total).toBe(0);
     }
   });
+
+  it("restores an archived menu item as a new current version", async () => {
+    const store = await createStore();
+    const original = store.getMenu()[0];
+
+    const removed = await store.deleteMenuItem(original.id);
+    expect(removed).not.toBeNull();
+    expect(store.getMenu().find((item) => item.id === original.id)).toBeUndefined();
+
+    const archived = await store.getArchivedMenuItems();
+    expect(archived.some((item) => item.logicalId === original.logicalId)).toBe(true);
+
+    const restored = await store.restoreMenuItem(original.id, {
+      changeReason: "Restore test",
+    });
+
+    expect(restored).not.toBeNull();
+    expect(restored?.id).not.toBe(original.id);
+    expect(restored?.logicalId).toBe(original.logicalId);
+    expect(restored?.version).toBe(original.version + 1);
+    expect(restored?.isCurrentVersion).toBe(true);
+    expect(restored?.supersedes).toBe(original.id);
+    expect(restored?.changeReason).toBe("Restore test");
+    expect(store.getMenu().find((item) => item.id === restored?.id)).toBeDefined();
+
+    const archivedAfterRestore = await store.getArchivedMenuItems();
+    expect(
+      archivedAfterRestore.some((item) => item.logicalId === original.logicalId),
+    ).toBe(false);
+  });
 });

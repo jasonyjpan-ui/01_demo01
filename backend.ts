@@ -330,6 +330,30 @@ app.get(
   },
 );
 
+app.get(
+  "/api/menu/archived",
+  async ({ set }) => {
+    if (!store.getArchivedMenuItems) {
+      set.status = 501;
+      return { error: "Archived menu is not supported in this storage backend" };
+    }
+
+    return { data: await store.getArchivedMenuItems() };
+  },
+  {
+    detail: {
+      tags: ["menu"],
+      summary: "List archived menu items",
+      description:
+        "Return the latest archived version for menu items that do not have a current version.",
+    },
+    response: {
+      200: menuListResponseSchema,
+      501: apiErrorResponseSchema,
+    },
+  },
+);
+
 // 版本歷史查詢 API
 app.get(
   "/api/menu/:id/history",
@@ -410,6 +434,47 @@ app.delete(
     response: {
       200: menuItemResponseSchema,
       404: apiErrorResponseSchema,
+    },
+  },
+);
+
+app.post(
+  "/api/menu/:id/restore",
+  async ({ params, body, set }) => {
+    if (!store.restoreMenuItem) {
+      set.status = 501;
+      return { error: "Menu restore is not supported in this storage backend" };
+    }
+
+    const menuId = parseInt(params.id);
+    const restoredMenuItem = await store.restoreMenuItem(menuId, {
+      changeReason: body.changeReason,
+    });
+
+    if (!restoredMenuItem) {
+      set.status = 404;
+      return { error: "Menu item not found" };
+    }
+
+    return { data: restoredMenuItem };
+  },
+  {
+    params: t.Object({
+      id: t.String({ pattern: "^[0-9]+$" }),
+    }),
+    body: t.Object({
+      changeReason: t.Optional(t.String({ minLength: 1 })),
+    }),
+    detail: {
+      tags: ["menu"],
+      summary: "Restore an archived menu item",
+      description:
+        "Create a new current version from a historical or archived menu item version.",
+    },
+    response: {
+      200: menuItemResponseSchema,
+      404: apiErrorResponseSchema,
+      501: apiErrorResponseSchema,
     },
   },
 );

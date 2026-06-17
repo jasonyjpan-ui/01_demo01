@@ -37,6 +37,11 @@ export interface Store {
     },
   ): Promise<MenuItem | null>;
   deleteMenuItem(menuId: number): Promise<MenuItem | null>;
+  restoreMenuItem?(
+    menuId: number,
+    input?: { changeReason?: string },
+  ): Promise<MenuItem | null>;
+  getArchivedMenuItems?(): Promise<MenuItem[]>;
   getMenuItemHistory?(menuId: number): Promise<Array<{
     id?: number;
     logicalId?: number;

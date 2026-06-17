@@ -247,6 +247,28 @@ export class PgStore implements Store {
     return removedItem;
   }
 
+  async restoreMenuItem(
+    menuId: number,
+    input: { changeReason?: string } = {},
+  ): Promise<MenuItem | null> {
+    const restoredItem = await this.menuRepository.restoreMenuItem(menuId, input);
+
+    if (!restoredItem) {
+      return null;
+    }
+
+    this.menu = this.menu.filter(
+      (item) => (item.logicalId ?? item.id) !== restoredItem.logicalId,
+    );
+    this.menu.push(restoredItem);
+
+    return restoredItem;
+  }
+
+  async getArchivedMenuItems(): Promise<MenuItem[]> {
+    return await this.menuRepository.getArchivedMenuItems();
+  }
+
   getOrders(): ReadonlyArray<Order> {
     return this.orders;
   }

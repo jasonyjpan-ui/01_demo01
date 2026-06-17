@@ -375,6 +375,71 @@ export class JsonFileStore implements Store {
     return removedMenuItem ?? null;
   }
 
+  async restoreMenuItem(
+    menuId: number,
+    input: { changeReason?: string } = {},
+  ): Promise<MenuItem | null> {
+    const sourceItem = this.menu.find((item) => item.id === menuId);
+    if (!sourceItem) {
+      return null;
+    }
+
+    const logicalId = sourceItem.logicalId ?? sourceItem.id;
+    const versions = this.menu.filter(
+      (item) => (item.logicalId ?? item.id) === logicalId,
+    );
+    const currentItem = versions.find((item) => item.isCurrentVersion !== false);
+    const latestVersion = Math.max(...versions.map((item) => item.version));
+    const changedAt = new Date().toISOString();
+
+    if (currentItem) {
+      currentItem.isCurrentVersion = false;
+      currentItem.changedAt = changedAt;
+    }
+
+    const restoredItem: MenuItem = {
+      ...sourceItem,
+      id: ++this.menuIdCounter,
+      logicalId,
+      version: latestVersion + 1,
+      isCurrentVersion: true,
+      supersedes: currentItem?.id ?? sourceItem.id,
+      changeReason:
+        input.changeReason ?? `Restore from version ${sourceItem.version}`,
+      previousPrice:
+        currentItem && currentItem.price !== sourceItem.price
+          ? currentItem.price
+          : sourceItem.previousPrice,
+      createdAt: changedAt,
+      changedAt,
+    };
+
+    this.menu.push(restoredItem);
+    await this.persist();
+
+    return restoredItem;
+  }
+
+  async getArchivedMenuItems(): Promise<MenuItem[]> {
+    const byLogicalId = new Map<number, MenuItem[]>();
+
+    for (const item of this.menu) {
+      const logicalId = item.logicalId ?? item.id;
+      byLogicalId.set(logicalId, [...(byLogicalId.get(logicalId) ?? []), item]);
+    }
+
+    return [...byLogicalId.values()]
+      .filter((versions) =>
+        versions.every((item) => item.isCurrentVersion === false),
+      )
+      .map((versions) =>
+        versions.reduce((latest, item) =>
+          item.version > latest.version ? item : latest,
+        ),
+      )
+      .sort((a, b) => a.name.localeCompare(b.name, "zh-Hant"));
+  }
+
   getOrders(): ReadonlyArray<Order> {
     return this.orders;
   }
