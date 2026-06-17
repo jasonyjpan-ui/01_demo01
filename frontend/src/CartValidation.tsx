@@ -18,7 +18,8 @@ interface CartValidationProps {
 function sameLogicalItem(a: MenuItem, b: MenuItem): boolean {
   return (
     a.id === b.id ||
-    (a.logicalId !== undefined && b.logicalId !== undefined &&
+    (a.logicalId !== undefined &&
+      b.logicalId !== undefined &&
       a.logicalId === b.logicalId)
   );
 }
@@ -33,14 +34,14 @@ export function CartValidation({
     return null;
   }
 
-  const staleItems: StaleItem[] = [];
+  const unavailableItems: StaleItem[] = [];
   const priceChangedItems: StaleItem[] = [];
 
   order.items.forEach((orderItem) => {
     const currentMenu = menu.find((item) => sameLogicalItem(item, orderItem.item));
 
     if (!currentMenu) {
-      staleItems.push({
+      unavailableItems.push({
         id: orderItem.item.id,
         name: orderItem.item.name,
         orderedPrice: orderItem.item.price,
@@ -58,31 +59,31 @@ export function CartValidation({
       name: orderItem.item.name,
       orderedPrice: orderItem.item.price,
       currentPrice: currentMenu.price,
-      reason: currentMenu.changeReason || "菜單已更新",
+      reason: currentMenu.changeReason || "菜單已有新版本",
     };
 
     if (currentMenu.price !== orderItem.item.price) {
       priceChangedItems.push(validationItem);
     } else {
-      staleItems.push(validationItem);
+      unavailableItems.push(validationItem);
     }
   });
 
-  if (staleItems.length === 0 && priceChangedItems.length === 0) {
+  if (unavailableItems.length === 0 && priceChangedItems.length === 0) {
     return null;
   }
 
   return (
-    <div className="space-y-3 mb-4">
+    <div className="mb-4 space-y-3">
       {priceChangedItems.length > 0 ? (
         <div className="alert alert-warning items-start">
           <div className="w-full">
-            <div className="font-semibold mb-2">購物車內有品項價格已更新</div>
+            <div className="mb-2 font-semibold">購物車中有品項價格已更新</div>
             <ul className="space-y-2 text-sm">
               {priceChangedItems.map((item) => (
                 <li
                   key={item.id}
-                  className="flex items-center justify-between gap-3 rounded bg-base-100/70 px-3 py-2"
+                  className="flex flex-wrap items-center justify-between gap-3 rounded bg-base-100/70 px-3 py-2"
                 >
                   <span className="font-medium">{item.name}</span>
                   <span>
@@ -100,18 +101,18 @@ export function CartValidation({
         </div>
       ) : null}
 
-      {staleItems.length > 0 ? (
+      {unavailableItems.length > 0 ? (
         <div className="alert alert-error items-start">
           <div className="w-full">
-            <div className="font-semibold mb-2">購物車內有過期品項</div>
-            <p className="text-sm mb-2">
-              這些品項已更新或下架，請重新整理菜單或移除後再送出訂單。
+            <div className="mb-2 font-semibold">購物車中有無法送出的品項</div>
+            <p className="mb-2 text-sm">
+              這些品項已經下架或版本過舊，請移除後再送出訂單。
             </p>
             <ul className="space-y-2 text-sm">
-              {staleItems.map((item) => (
+              {unavailableItems.map((item) => (
                 <li
                   key={item.id}
-                  className="flex items-center justify-between gap-3 rounded bg-base-100/70 px-3 py-2"
+                  className="flex flex-wrap items-center justify-between gap-3 rounded bg-base-100/70 px-3 py-2"
                 >
                   <span className="font-medium">{item.name}</span>
                   <span className="text-xs opacity-70">{item.reason}</span>

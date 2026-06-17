@@ -1,4 +1,4 @@
-import { useEffect, useState, useMemo } from "react";
+import { useEffect, useMemo, useState } from "react";
 import "./App.css";
 import type {
   ApiDataResponse,
@@ -37,9 +37,18 @@ function normalizeUserId(rawId: unknown): string | null {
 function sameLogicalItem(a: MenuItem, b: MenuItem): boolean {
   return (
     a.id === b.id ||
-    (a.logicalId !== undefined && b.logicalId !== undefined &&
+    (a.logicalId !== undefined &&
+      b.logicalId !== undefined &&
       a.logicalId === b.logicalId)
   );
+}
+
+function formatDateTime(value?: string) {
+  if (!value) {
+    return "-";
+  }
+
+  return new Date(value).toLocaleString("zh-TW");
 }
 
 export default function App() {
@@ -54,9 +63,9 @@ export default function App() {
   const [orderId, setOrderId] = useState<number | null>(null);
   const [historyOrders, setHistoryOrders] = useState<Order[]>([]);
   const [historyLoading, setHistoryLoading] = useState(false);
-  const [cartQtyByItemId, setCartQtyByItemId] = useState<
-    Record<number, number>
-  >({});
+  const [cartQtyByItemId, setCartQtyByItemId] = useState<Record<number, number>>(
+    {},
+  );
   const [cartTotal, setCartTotal] = useState(0);
   const [activeItemId, setActiveItemId] = useState<number | null>(null);
   const [actionError, setActionError] = useState("");
@@ -77,6 +86,14 @@ export default function App() {
     };
   } | null>(null);
   const [currentOrder, setCurrentOrder] = useState<Order | null>(null);
+  const [editingMenuItem, setEditingMenuItem] = useState<MenuItem | null>(null);
+  const [editName, setEditName] = useState("");
+  const [editPrice, setEditPrice] = useState("");
+  const [editReason, setEditReason] = useState("");
+  const [menuActionId, setMenuActionId] = useState<number | null>(null);
+  const [menuHistoryItem, setMenuHistoryItem] = useState<MenuItem | null>(null);
+  const [menuHistory, setMenuHistory] = useState<MenuItem[]>([]);
+  const [menuHistoryLoading, setMenuHistoryLoading] = useState(false);
 
   function syncCartFromOrder(order: Order) {
     setCurrentOrder(order);
@@ -121,18 +138,16 @@ export default function App() {
     }
 
     const payload = (await response.json()) as ApiDataResponse<Order | null>;
-    const currentOrder = payload?.data;
+    const activeOrder = payload?.data;
 
-    if (!currentOrder) {
+    if (!activeOrder) {
       resetCartState();
-      setCurrentOrder(null);
       return null;
     }
 
-    setOrderId(currentOrder.id);
-    setCurrentOrder(currentOrder);
-    syncCartFromOrder(currentOrder);
-    return currentOrder;
+    setOrderId(activeOrder.id);
+    syncCartFromOrder(activeOrder);
+    return activeOrder;
   }
 
   async function loadOrderHistory(targetUserId: string): Promise<void> {
@@ -185,32 +200,18 @@ export default function App() {
       }
     }
 
-    async function loadMenu() {
-      try {
-        const response = await fetch(buildApiUrl("/api/menu"));
-        if (!response.ok) {
-          throw new Error(`HTTP ${response.status}`);
-        }
-
-        const payload = (await response.json()) as ApiDataResponse<MenuItem[]>;
-        const fetchedItems = Array.isArray(payload?.data) ? payload.data : [];
-
+    loadMenu()
+      .catch((fetchError) => {
         if (mounted) {
-          setItems(fetchedItems);
-        }
-      } catch (fetchError) {
-        if (mounted) {
-          setError("無法取得菜單資料，請稍後再試。");
+          setError("菜單讀取失敗，請稍後再試。");
           console.error(fetchError);
         }
-      } finally {
+      })
+      .finally(() => {
         if (mounted) {
           setLoading(false);
         }
-      }
-    }
-
-    void loadMenu();
+      });
 
     return () => {
       mounted = false;
@@ -225,7 +226,7 @@ export default function App() {
     }
 
     void refreshUserOrders(user.id).catch((refreshError) => {
-      setActionError("載入使用者訂單資料失敗，請稍後再試。");
+      setActionError("讀取使用者訂單失敗，請稍後再試。");
       console.error(refreshError);
     });
   }, [user]);
@@ -279,7 +280,7 @@ export default function App() {
           subtotal: item.price * qty,
         };
       })
-      .filter((entry) => entry !== null);
+      .filter((entry): entry is NonNullable<typeof entry> => entry !== null);
   }, [cartQtyByItemId, currentOrder, items]);
 
   async function ensureOrder(): Promise<number> {
@@ -382,18 +383,15 @@ export default function App() {
       const currentQty = cartQtyByItemId[item.id] ?? 0;
       const nextQty = currentQty + 1;
 
-      const response = await fetch(
-        buildApiUrl(`/api/orders/${targetOrderId}`),
-        {
-          method: "PATCH",
-          headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({
-            userId: user.id,
-            itemId: item.id,
-            qty: nextQty,
-          }),
-        },
-      );
+      const response = await fetch(buildApiUrl(`/api/orders/${targetOrderId}`), {
+        method: "PATCH",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          userId: user.id,
+          itemId: item.id,
+          qty: nextQty,
+        }),
+      });
 
       if (!response.ok) {
         throw new Error(`Update order failed: HTTP ${response.status}`);
@@ -462,8 +460,7 @@ export default function App() {
         }
       }
 
-      setCartQtyByItemId({});
-      setCartTotal(0);
+      resetCartState();
     } catch (clearError) {
       setActionError("清空購物車失敗，請稍後再試。");
       console.error(clearError);
@@ -492,21 +489,23 @@ export default function App() {
       );
 
       if (!response.ok) {
-        // 解析詳細的錯誤信息
-        const errorPayload = await response.json() as any;
-        
-        if (response.status === 409 && errorPayload.details) {
-          // 版本不匹配 - 提供詳細信息
+        const errorPayload = await response.json();
+        if (response.status === 409 && errorPayload?.details) {
           setSubmitError({
-            error: errorPayload.error || "Menu version mismatch: order contains stale item data",
+            error:
+              errorPayload.error ||
+              "Menu version mismatch: order contains stale item data",
             details: errorPayload.details,
           });
-        } else if (response.status === 400 && errorPayload.error) {
-          setActionError(errorPayload.error);
-        } else {
-          throw new Error(`Submit order failed: HTTP ${response.status}`);
+          return;
         }
-        return;
+
+        if (response.status === 400 && errorPayload?.error) {
+          setActionError(errorPayload.error);
+          return;
+        }
+
+        throw new Error(`Submit order failed: HTTP ${response.status}`);
       }
 
       const payload = (await response.json()) as ApiDataResponse<Order>;
@@ -517,21 +516,22 @@ export default function App() {
       }
     } catch (submitError) {
       console.error(submitError);
-      if (!submitError || !(submitError instanceof Error) || !submitError.message.includes("Menu version mismatch")) {
-        setActionError("送出訂單失敗，請稍後再試。");
-      }
+      setActionError("送出訂單失敗，請稍後再試。");
     } finally {
       setIsSubmittingOrder(false);
     }
   }
 
   async function handleRemoveStaleItems(): Promise<void> {
-    if (!user || !currentOrder) return;
+    if (!user || !currentOrder || orderId === null) {
+      return;
+    }
 
-    // 找出失效項目並移除
     const staleItemIds = new Set<number>();
     currentOrder.items.forEach((orderItem) => {
-      const currentMenu = items.find((m) => sameLogicalItem(m, orderItem.item));
+      const currentMenu = items.find((menuItem) =>
+        sameLogicalItem(menuItem, orderItem.item),
+      );
       if (!currentMenu || currentMenu.version !== orderItem.item.version) {
         staleItemIds.add(orderItem.item.id);
       }
@@ -539,18 +539,15 @@ export default function App() {
 
     for (const itemId of staleItemIds) {
       try {
-        const response = await fetch(
-          buildApiUrl(`/api/orders/${orderId}`),
-          {
-            method: "PATCH",
-            headers: { "Content-Type": "application/json" },
-            body: JSON.stringify({
-              userId: user.id,
-              itemId,
-              qty: 0,
-            }),
-          },
-        );
+        const response = await fetch(buildApiUrl(`/api/orders/${orderId}`), {
+          method: "PATCH",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({
+            userId: user.id,
+            itemId,
+            qty: 0,
+          }),
+        });
 
         if (!response.ok) {
           throw new Error(`Remove stale item failed: HTTP ${response.status}`);
@@ -558,35 +555,148 @@ export default function App() {
 
         const payload = (await response.json()) as ApiDataResponse<Order>;
         if (payload?.data) {
-          setCurrentOrder(payload.data);
           syncCartFromOrder(payload.data);
         }
-      } catch (error) {
-        console.error(`Failed to remove item ${itemId}:`, error);
+      } catch (removeError) {
+        console.error(`Failed to remove item ${itemId}:`, removeError);
       }
     }
 
-    // 清除錯誤提示
     setSubmitError(null);
   }
 
   async function handleRefreshMenuFromError(): Promise<void> {
-    if (!user) return;
+    if (!user) {
+      return;
+    }
 
     try {
       await loadMenu();
       await loadCurrentOrder(user.id);
       setSubmitError(null);
-    } catch (error) {
-      console.error("Failed to refresh menu:", error);
-      setActionError("刷新菜單失敗，請稍後再試。");
+    } catch (refreshError) {
+      console.error(refreshError);
+      setActionError("重新整理菜單失敗，請稍後再試。");
+    }
+  }
+
+  function startMenuEdit(item: MenuItem): void {
+    setEditingMenuItem(item);
+    setEditName(item.name);
+    setEditPrice(String(item.price));
+    setEditReason("");
+  }
+
+  async function submitMenuEdit(): Promise<void> {
+    if (!editingMenuItem) {
+      return;
+    }
+
+    const nextPrice = Number(editPrice);
+    if (!Number.isFinite(nextPrice) || nextPrice < 0) {
+      setActionError("請輸入有效價格。");
+      return;
+    }
+
+    if (!editReason.trim()) {
+      setActionError("請填寫本次變更原因。");
+      return;
+    }
+
+    setActionError("");
+    setMenuActionId(editingMenuItem.id);
+
+    try {
+      const response = await fetch(buildApiUrl(`/api/menu/${editingMenuItem.id}`), {
+        method: "PATCH",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          name: editName.trim(),
+          price: nextPrice,
+          version: editingMenuItem.version,
+          changeReason: editReason.trim(),
+        }),
+      });
+
+      const payload = await response.json();
+      if (!response.ok) {
+        throw new Error(payload?.error || `HTTP ${response.status}`);
+      }
+
+      await loadMenu();
+      if (user) {
+        await loadCurrentOrder(user.id);
+      }
+
+      setEditingMenuItem(null);
+      setEditReason("");
+    } catch (editError) {
+      console.error(editError);
+      setActionError(
+        editError instanceof Error
+          ? `菜單更新失敗：${editError.message}`
+          : "菜單更新失敗。",
+      );
+    } finally {
+      setMenuActionId(null);
+    }
+  }
+
+  async function openMenuHistory(item: MenuItem): Promise<void> {
+    setMenuHistoryItem(item);
+    setMenuHistory([]);
+    setMenuHistoryLoading(true);
+
+    try {
+      const response = await fetch(buildApiUrl(`/api/menu/${item.id}/history`));
+      const payload = (await response.json()) as ApiDataResponse<MenuItem[]>;
+      if (!response.ok) {
+        throw new Error(`HTTP ${response.status}`);
+      }
+
+      setMenuHistory(Array.isArray(payload.data) ? payload.data : []);
+    } catch (historyError) {
+      console.error(historyError);
+      setActionError("版本歷史讀取失敗。");
+    } finally {
+      setMenuHistoryLoading(false);
+    }
+  }
+
+  async function archiveMenuItem(item: MenuItem): Promise<void> {
+    setMenuActionId(item.id);
+    setActionError("");
+
+    try {
+      const response = await fetch(buildApiUrl(`/api/menu/${item.id}`), {
+        method: "DELETE",
+      });
+      const payload = await response.json();
+
+      if (!response.ok) {
+        throw new Error(payload?.error || `HTTP ${response.status}`);
+      }
+
+      await loadMenu();
+      if (user) {
+        await loadCurrentOrder(user.id);
+      }
+    } catch (deleteError) {
+      console.error(deleteError);
+      setActionError(
+        deleteError instanceof Error
+          ? `菜單下架失敗：${deleteError.message}`
+          : "菜單下架失敗。",
+      );
+    } finally {
+      setMenuActionId(null);
     }
   }
 
   if (loading) {
     return (
-      <div className="flex justify-center items-center min-h-screen">
-        <span className="loading loading-spinner loading-lg"></span>
+      <div className="flex min-h-screen items-center justify-center">
+        <span className="loading loading-spinner loading-lg" />
       </div>
     );
   }
@@ -601,14 +711,12 @@ export default function App() {
 
   return (
     <div className="min-h-screen bg-base-200">
-      <div className="navbar bg-base-100 shadow-lg flex-col items-stretch gap-2 md:flex-row md:items-center">
-        <div className="flex-1 w-full md:w-auto">
-          <a className="btn btn-ghost normal-case text-2xl">
-            🌅 聯大資工早餐菜單
-          </a>
+      <div className="navbar flex-col items-stretch gap-2 bg-base-100 shadow-lg md:flex-row md:items-center">
+        <div className="flex-1">
+          <a className="btn btn-ghost text-2xl normal-case">早安早餐店</a>
         </div>
-        <div className="flex-none w-full md:w-auto">
-          <div className="flex flex-wrap gap-2 items-center md:justify-end">
+        <div className="flex-none">
+          <div className="flex flex-wrap items-center gap-2 md:justify-end">
             <div className="badge badge-outline">
               {user ? `已登入 ${user.name}` : "尚未登入"}
             </div>
@@ -616,17 +724,15 @@ export default function App() {
               {items.length} 個品項・{grouped.categories.length} 類
             </div>
             <div className="badge badge-secondary">
-              購物車 {cartItemCount} 件
+              購物車 {cartItemCount} 份
             </div>
             <div className="badge badge-accent">總計 ${cartTotal}</div>
             <button
               className="btn btn-sm btn-outline"
-              onClick={() => {
-                setIsCartOpen(true);
-              }}
+              onClick={() => setIsCartOpen(true)}
               disabled={!user}
             >
-              購物車明細
+              查看購物車
             </button>
             {user ? (
               <button className="btn btn-sm" onClick={handleLogout}>
@@ -639,20 +745,18 @@ export default function App() {
 
       <main className="container mx-auto p-6">
         {!user ? (
-          <section className="max-w-xl mx-auto card bg-base-100 shadow-md mb-8">
+          <section className="card mx-auto mb-8 max-w-xl bg-base-100 shadow-md">
             <div className="card-body">
-              <h2 className="card-title">登入後開始點餐</h2>
+              <h2 className="card-title">登入示範帳號</h2>
               <p className="text-sm opacity-70">
-                範例帳號：demo@example.com、amy@example.com，密碼皆為 1234
+                可使用 demo@example.com 或 amy@example.com，密碼皆為 1234。
               </p>
               <label className="form-control w-full">
                 <span className="label-text mb-1">Email</span>
                 <input
                   className="input input-bordered"
                   value={emailInput}
-                  onChange={(event) => {
-                    setEmailInput(event.target.value);
-                  }}
+                  onChange={(event) => setEmailInput(event.target.value)}
                 />
               </label>
               <label className="form-control w-full">
@@ -661,9 +765,7 @@ export default function App() {
                   type="password"
                   className="input input-bordered"
                   value={passwordInput}
-                  onChange={(event) => {
-                    setPasswordInput(event.target.value);
-                  }}
+                  onChange={(event) => setPasswordInput(event.target.value)}
                 />
               </label>
               {authError ? (
@@ -692,40 +794,64 @@ export default function App() {
 
         {items.length === 0 ? (
           <div className="alert alert-info">
-            <span>目前沒有菜單資料</span>
+            <span>目前沒有菜單資料。</span>
           </div>
         ) : (
           grouped.categories.map((category) => (
-            <div key={category} className="mb-8">
-              <h2 className="text-3xl font-bold mb-4 text-primary border-b-2 border-primary pb-2">
+            <section key={category} className="mb-8">
+              <h2 className="mb-4 border-b-2 border-primary pb-2 text-3xl font-bold text-primary">
                 {category}
               </h2>
-              <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
+              <div className="grid grid-cols-1 gap-4 md:grid-cols-2 lg:grid-cols-3">
                 {(grouped.groupedItems[category] || []).map((item) => (
-                  <div
+                  <article
                     key={item.id}
-                    className="card bg-base-100 shadow-md hover:shadow-lg transition-shadow"
+                    className="card bg-base-100 shadow-md transition-shadow hover:shadow-lg"
                   >
                     <figure className="h-44 overflow-hidden bg-base-300">
                       <img
                         src={item.image_url}
                         alt={item.name}
-                        className="w-full h-full object-cover"
+                        className="h-full w-full object-cover"
                         loading="lazy"
                         onError={(event) => {
-                          const target = event.currentTarget;
-                          target.src =
+                          event.currentTarget.src =
                             "https://images.unsplash.com/photo-1526318896980-cf78c088247c?auto=format&fit=crop&w=800&q=80";
                         }}
                       />
                     </figure>
                     <div className="card-body">
                       <h3 className="card-title text-lg">{item.name}</h3>
-                      <p className="text-sm opacity-80 line-clamp-2 min-h-[2.75rem]">
+                      <div className="flex flex-wrap gap-2 text-xs">
+                        <span className="badge badge-outline">
+                          v{item.version}
+                        </span>
+                        <span className="badge badge-ghost">
+                          品項 #{item.logicalId ?? item.id}
+                        </span>
+                        {item.previousPrice !== undefined &&
+                        item.previousPrice !== item.price ? (
+                          <span className="badge badge-warning">
+                            ${item.previousPrice} → ${item.price}
+                          </span>
+                        ) : null}
+                      </div>
+                      <p className="min-h-[2.75rem] text-sm opacity-80 line-clamp-2">
                         {item.description}
                       </p>
-                      <div className="card-actions justify-between items-center">
+                      {item.changeReason ? (
+                        <p className="rounded bg-warning/10 px-2 py-1 text-xs">
+                          最近異動：{item.changeReason}
+                        </p>
+                      ) : null}
+                      <div className="card-actions items-center justify-between">
                         <span className="text-xl font-bold text-success">
+                          {item.previousPrice !== undefined &&
+                          item.previousPrice !== item.price ? (
+                            <span className="mr-2 text-sm text-base-content/50 line-through">
+                              ${item.previousPrice}
+                            </span>
+                          ) : null}
                           ${item.price}
                         </span>
                         <button
@@ -733,57 +859,87 @@ export default function App() {
                           onClick={() => {
                             void addToCart(item);
                           }}
-                          disabled={activeItemId === item.id}
+                          disabled={activeItemId === item.id || !user}
                         >
                           {activeItemId === item.id
                             ? "加入中..."
-                            : `加入購物車${cartQtyByItemId[item.id] ? ` (${cartQtyByItemId[item.id]})` : ""}`}
+                            : `加入購物車${
+                                cartQtyByItemId[item.id]
+                                  ? ` (${cartQtyByItemId[item.id]})`
+                                  : ""
+                              }`}
+                        </button>
+                      </div>
+                      <div className="grid grid-cols-3 gap-2">
+                        <button
+                          type="button"
+                          className="btn btn-xs btn-outline"
+                          onClick={() => {
+                            void openMenuHistory(item);
+                          }}
+                        >
+                          版本
+                        </button>
+                        <button
+                          type="button"
+                          className="btn btn-xs btn-outline"
+                          onClick={() => startMenuEdit(item)}
+                        >
+                          編輯
+                        </button>
+                        <button
+                          type="button"
+                          className="btn btn-xs btn-error btn-outline"
+                          disabled={menuActionId === item.id}
+                          onClick={() => {
+                            void archiveMenuItem(item);
+                          }}
+                        >
+                          下架
                         </button>
                       </div>
                     </div>
-                  </div>
+                  </article>
                 ))}
               </div>
-            </div>
+            </section>
           ))
         )}
 
         {user ? (
           <section className="mt-10">
-            <h2 className="text-2xl font-bold mb-4">我的訂單歷史</h2>
+            <h2 className="mb-4 text-2xl font-bold">我的訂單歷史</h2>
             {historyLoading ? (
               <div className="alert">
                 <span>讀取中...</span>
               </div>
             ) : historyOrders.length === 0 ? (
               <div className="alert alert-info">
-                <span>目前尚無歷史訂單。</span>
+                <span>目前沒有歷史訂單。</span>
               </div>
             ) : (
               <div className="space-y-3">
                 {historyOrders.map((order) => (
                   <article
                     key={order.id}
-                    className="card bg-base-100 shadow-sm border border-base-300"
+                    className="card border border-base-300 bg-base-100 shadow-sm"
                   >
                     <div className="card-body p-4">
-                      <div className="flex items-center justify-between gap-2 flex-wrap">
+                      <div className="flex flex-wrap items-center justify-between gap-2">
                         <h3 className="font-semibold">訂單 #{order.id}</h3>
                         <span className="badge badge-success">已送出</span>
                       </div>
                       <p className="text-sm opacity-70">
-                        建立時間：{order.createdAt}
+                        建立時間：{formatDateTime(order.createdAt)}
                       </p>
-                      <ul className="text-sm list-disc pl-5 space-y-1">
+                      <ul className="list-disc space-y-1 pl-5 text-sm">
                         {order.items.map((detail) => (
                           <li key={`${order.id}-${detail.item.id}`}>
                             {detail.item.name} x {detail.qty}
                           </li>
                         ))}
                       </ul>
-                      <p className="font-bold text-right">
-                        總額 ${order.total}
-                      </p>
+                      <p className="text-right font-bold">總計 ${order.total}</p>
                     </div>
                   </article>
                 ))}
@@ -797,25 +953,21 @@ export default function App() {
         <>
           <button
             className="fixed inset-0 bg-black/35"
-            aria-label="close cart drawer"
-            onClick={() => {
-              setIsCartOpen(false);
-            }}
+            aria-label="關閉購物車"
+            onClick={() => setIsCartOpen(false)}
           />
-          <aside className="fixed right-0 top-0 h-full w-full max-w-md bg-base-100 shadow-2xl z-10 flex flex-col">
-            <div className="p-4 border-b border-base-300 flex items-center justify-between">
-              <h2 className="text-xl font-bold">購物車明細</h2>
+          <aside className="fixed right-0 top-0 z-10 flex h-full w-full max-w-md flex-col bg-base-100 shadow-2xl">
+            <div className="flex items-center justify-between border-b border-base-300 p-4">
+              <h2 className="text-xl font-bold">購物車內容</h2>
               <button
                 className="btn btn-sm btn-ghost"
-                onClick={() => {
-                  setIsCartOpen(false);
-                }}
+                onClick={() => setIsCartOpen(false)}
               >
                 關閉
               </button>
             </div>
 
-            <div className="p-4 flex-1 overflow-auto">
+            <div className="flex-1 overflow-auto p-4">
               {cartDetails.length === 0 ? (
                 <div className="alert">
                   <span>購物車目前是空的。</span>
@@ -832,7 +984,7 @@ export default function App() {
                     {cartDetails.map((detail) => (
                       <li
                         key={detail.itemId}
-                        className="p-3 rounded-lg bg-base-200 flex items-center justify-between"
+                        className="flex items-center justify-between rounded-lg bg-base-200 p-3"
                       >
                         <div>
                           <p className="font-semibold">{detail.item.name}</p>
@@ -848,13 +1000,13 @@ export default function App() {
               )}
             </div>
 
-            <div className="p-4 border-t border-base-300 space-y-3">
+            <div className="space-y-3 border-t border-base-300 p-4">
               <div className="flex items-center justify-between font-semibold">
-                <span>總件數</span>
+                <span>品項數量</span>
                 <span>{cartItemCount}</span>
               </div>
               <div className="flex items-center justify-between text-lg font-bold">
-                <span>總金額</span>
+                <span>總計</span>
                 <span>${cartTotal}</span>
               </div>
               <button
@@ -880,7 +1032,154 @@ export default function App() {
         </>
       ) : null}
 
-      {/* 訂單提交錯誤模態框 */}
+      {editingMenuItem ? (
+        <div className="fixed inset-0 z-40 flex items-center justify-center p-4">
+          <button
+            type="button"
+            className="absolute inset-0 bg-black/40"
+            aria-label="關閉菜單編輯"
+            onClick={() => setEditingMenuItem(null)}
+          />
+          <section className="relative z-10 w-full max-w-lg rounded-lg bg-base-100 shadow-2xl">
+            <div className="border-b border-base-300 px-5 py-4">
+              <h2 className="text-lg font-bold">編輯菜單並建立新版本</h2>
+              <p className="text-sm opacity-70">
+                目前版本 v{editingMenuItem.version}，送出後會建立 v
+                {editingMenuItem.version + 1}。
+              </p>
+            </div>
+            <div className="space-y-3 px-5 py-4">
+              <label className="form-control">
+                <span className="label-text mb-1">品名</span>
+                <input
+                  className="input input-bordered"
+                  value={editName}
+                  onChange={(event) => setEditName(event.target.value)}
+                />
+              </label>
+              <label className="form-control">
+                <span className="label-text mb-1">價格</span>
+                <input
+                  className="input input-bordered"
+                  type="number"
+                  min="0"
+                  value={editPrice}
+                  onChange={(event) => setEditPrice(event.target.value)}
+                />
+              </label>
+              <label className="form-control">
+                <span className="label-text mb-1">變更原因</span>
+                <textarea
+                  className="textarea textarea-bordered"
+                  value={editReason}
+                  placeholder="例如：原物料上漲、菜單名稱調整"
+                  onChange={(event) => setEditReason(event.target.value)}
+                />
+              </label>
+            </div>
+            <div className="flex justify-end gap-2 border-t border-base-300 px-5 py-4">
+              <button className="btn" onClick={() => setEditingMenuItem(null)}>
+                取消
+              </button>
+              <button
+                className="btn btn-primary"
+                disabled={menuActionId === editingMenuItem.id}
+                onClick={() => {
+                  void submitMenuEdit();
+                }}
+              >
+                建立新版本
+              </button>
+            </div>
+          </section>
+        </div>
+      ) : null}
+
+      {menuHistoryItem ? (
+        <div className="fixed inset-0 z-40 flex items-center justify-center p-4">
+          <button
+            type="button"
+            className="absolute inset-0 bg-black/40"
+            aria-label="關閉版本歷史"
+            onClick={() => setMenuHistoryItem(null)}
+          />
+          <section className="relative z-10 max-h-[85vh] w-full max-w-2xl overflow-hidden rounded-lg bg-base-100 shadow-2xl">
+            <div className="border-b border-base-300 px-5 py-4">
+              <h2 className="text-lg font-bold">版本歷史</h2>
+              <p className="text-sm opacity-70">
+                {menuHistoryItem.name}・品項 #
+                {menuHistoryItem.logicalId ?? menuHistoryItem.id}
+              </p>
+            </div>
+            <div className="max-h-[60vh] overflow-y-auto px-5 py-4">
+              {menuHistoryLoading ? (
+                <div className="alert">
+                  <span>讀取版本歷史中...</span>
+                </div>
+              ) : menuHistory.length === 0 ? (
+                <div className="alert alert-info">
+                  <span>沒有版本歷史。</span>
+                </div>
+              ) : (
+                <ol className="space-y-3">
+                  {menuHistory.map((historyItem) => (
+                    <li
+                      key={historyItem.id}
+                      className="rounded border border-base-300 bg-base-200 px-4 py-3"
+                    >
+                      <div className="flex flex-wrap items-center justify-between gap-2">
+                        <div className="font-semibold">
+                          v{historyItem.version}・{historyItem.name}
+                        </div>
+                        <span
+                          className={
+                            historyItem.isCurrentVersion
+                              ? "badge badge-success"
+                              : "badge badge-ghost"
+                          }
+                        >
+                          {historyItem.isCurrentVersion ? "目前版本" : "歷史版本"}
+                        </span>
+                      </div>
+                      <div className="mt-2 grid gap-1 text-sm md:grid-cols-2">
+                        <span>版本 ID：{historyItem.id}</span>
+                        <span>取代：{historyItem.supersedes ?? "-"}</span>
+                        <span>
+                          價格：
+                          {historyItem.previousPrice !== undefined &&
+                          historyItem.previousPrice !== historyItem.price ? (
+                            <>
+                              <span className="mx-1 line-through opacity-60">
+                                ${historyItem.previousPrice}
+                              </span>
+                              →
+                            </>
+                          ) : null}
+                          <span className="ml-1 font-bold">
+                            ${historyItem.price}
+                          </span>
+                        </span>
+                        <span>時間：{formatDateTime(historyItem.createdAt)}</span>
+                      </div>
+                      {historyItem.changeReason ? (
+                        <p className="mt-2 rounded bg-base-100 px-2 py-1 text-sm">
+                          變更原因：{historyItem.changeReason}
+                        </p>
+                      ) : null}
+                    </li>
+                  ))}
+                </ol>
+              )}
+            </div>
+            <div className="flex justify-end border-t border-base-300 px-5 py-4">
+              <button className="btn" onClick={() => setMenuHistoryItem(null)}>
+                關閉
+              </button>
+            </div>
+          </section>
+        </div>
+      ) : null}
+
       <OrderSubmitError
         error={submitError}
         onDismiss={() => setSubmitError(null)}

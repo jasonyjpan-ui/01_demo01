@@ -35,7 +35,7 @@ export function OrderSubmitError({
       <button
         type="button"
         className="absolute inset-0 bg-black/50"
-        aria-label="關閉錯誤視窗"
+        aria-label="關閉送單錯誤"
         onClick={onDismiss}
       />
       <section className="relative z-10 flex max-h-[85vh] w-full max-w-lg flex-col rounded-lg bg-base-100 shadow-2xl">
@@ -66,7 +66,7 @@ export function OrderSubmitError({
                     key={item.id}
                     className="rounded border border-error/30 bg-error/5 px-3 py-2"
                   >
-                    <div className="flex items-center justify-between gap-3">
+                    <div className="flex flex-wrap items-center justify-between gap-3">
                       <span className="font-medium">{item.name}</span>
                       <span className="text-xs opacity-70">{item.reason}</span>
                     </div>
@@ -82,7 +82,7 @@ export function OrderSubmitError({
                           </span>
                         </>
                       ) : (
-                        <span className="opacity-70">目前已無可用版本</span>
+                        <span className="opacity-70">目前沒有可用的新版本</span>
                       )}
                     </div>
                   </li>
@@ -105,7 +105,7 @@ export function OrderSubmitError({
             </button>
           ) : null}
           <button type="button" className="btn" onClick={onDismiss}>
-            稍後處理
+            我知道了
           </button>
         </footer>
       </section>
