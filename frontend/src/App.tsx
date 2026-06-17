@@ -565,6 +565,71 @@ export default function App() {
     setSubmitError(null);
   }
 
+  async function handleApplyLatestCartItems(): Promise<void> {
+    if (!user || !currentOrder || orderId === null) {
+      return;
+    }
+
+    setActionError("");
+
+    try {
+      const latestMenu = await loadMenu();
+      let latestOrder: Order | null = currentOrder;
+
+      for (const orderItem of currentOrder.items) {
+        const currentMenu = latestMenu.find((menuItem) =>
+          sameLogicalItem(menuItem, orderItem.item),
+        );
+
+        if (!currentMenu || currentMenu.version === orderItem.item.version) {
+          continue;
+        }
+
+        const removeResponse = await fetch(buildApiUrl(`/api/orders/${orderId}`), {
+          method: "PATCH",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({
+            userId: user.id,
+            itemId: orderItem.item.id,
+            qty: 0,
+          }),
+        });
+
+        if (!removeResponse.ok) {
+          throw new Error(`Remove stale item failed: HTTP ${removeResponse.status}`);
+        }
+
+        const addResponse = await fetch(buildApiUrl(`/api/orders/${orderId}`), {
+          method: "PATCH",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({
+            userId: user.id,
+            itemId: currentMenu.id,
+            qty: orderItem.qty,
+          }),
+        });
+
+        if (!addResponse.ok) {
+          throw new Error(`Apply latest item failed: HTTP ${addResponse.status}`);
+        }
+
+        const payload = (await addResponse.json()) as ApiDataResponse<Order>;
+        latestOrder = payload.data;
+      }
+
+      if (latestOrder) {
+        syncCartFromOrder(latestOrder);
+      } else {
+        await loadCurrentOrder(user.id);
+      }
+
+      setSubmitError(null);
+    } catch (applyError) {
+      console.error(applyError);
+      setActionError("套用最新價格失敗，請稍後再試。");
+    }
+  }
+
   async function handleRefreshMenuFromError(): Promise<void> {
     if (!user) {
       return;
@@ -979,6 +1044,7 @@ export default function App() {
                   <CartValidation
                     order={currentOrder}
                     menu={items}
+                    onApplyLatestItems={handleApplyLatestCartItems}
                     onRemoveStaleItems={handleRemoveStaleItems}
                     onRefreshMenu={handleRefreshMenuFromError}
                   />

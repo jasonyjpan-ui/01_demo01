@@ -456,21 +456,30 @@ export class JsonFileStore implements Store {
       return { ok: false, code: "ORDER_NOT_EDITABLE" };
     }
 
+    const existingItemIndex = order.items.findIndex(
+      (orderItem) => orderItem.item.id === input.itemId,
+    );
+
+    if (input.qty === 0) {
+      if (existingItemIndex !== -1) {
+        order.items.splice(existingItemIndex, 1);
+      }
+
+      order.total = calculateOrderTotal(order.items);
+      await this.persist();
+
+      return { ok: true, order };
+    }
+
     const menuItem = this.getMenu().find((item) => item.id === input.itemId);
     if (!menuItem) {
       return { ok: false, code: "MENU_ITEM_NOT_FOUND" };
     }
 
-    const existingItemIndex = order.items.findIndex(
-      (orderItem) => orderItem.item.id === input.itemId,
-    );
-
     if (existingItemIndex !== -1) {
       const existingOrderItem = order.items[existingItemIndex];
 
-      if (input.qty === 0) {
-        order.items.splice(existingItemIndex, 1);
-      } else if (existingOrderItem) {
+      if (existingOrderItem) {
         existingOrderItem.qty = input.qty;
         existingOrderItem.item = { ...menuItem };
       }

@@ -11,6 +11,7 @@ interface StaleItem {
 interface CartValidationProps {
   order: Order | null;
   menu: MenuItem[];
+  onApplyLatestItems?: () => void;
   onRemoveStaleItems?: () => void;
   onRefreshMenu?: () => void;
 }
@@ -27,6 +28,7 @@ function sameLogicalItem(a: MenuItem, b: MenuItem): boolean {
 export function CartValidation({
   order,
   menu,
+  onApplyLatestItems,
   onRemoveStaleItems,
   onRefreshMenu,
 }: CartValidationProps) {
@@ -97,6 +99,35 @@ export function CartValidation({
                 </li>
               ))}
             </ul>
+            <div className="mt-3 flex flex-wrap gap-2">
+              {onApplyLatestItems ? (
+                <button
+                  type="button"
+                  onClick={onApplyLatestItems}
+                  className="btn btn-sm btn-warning btn-outline"
+                >
+                  套用最新價格
+                </button>
+              ) : null}
+              {onRemoveStaleItems ? (
+                <button
+                  type="button"
+                  onClick={onRemoveStaleItems}
+                  className="btn btn-sm btn-error btn-outline"
+                >
+                  移除過期品項
+                </button>
+              ) : null}
+              {onRefreshMenu ? (
+                <button
+                  type="button"
+                  onClick={onRefreshMenu}
+                  className="btn btn-sm btn-primary btn-outline"
+                >
+                  重新整理菜單
+                </button>
+              ) : null}
+            </div>
           </div>
         </div>
       ) : null}

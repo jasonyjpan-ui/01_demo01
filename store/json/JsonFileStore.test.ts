@@ -131,4 +131,40 @@ describe("JsonFileStore versioned menu behavior", () => {
     expect(submitResult.ok).toBe(false);
     expect(submitResult.code).toBe("MENU_VERSION_MISMATCH");
   });
+
+  it("removes stale order items after their menu version changes", async () => {
+    const store = await createStore();
+    const currentUserId = "0001";
+    const currentOrder = await store.createOrder({ userId: currentUserId });
+    const menuItem = store.getMenu()[0];
+
+    const addResult = await store.updateOrderItem(currentOrder.id, {
+      userId: currentUserId,
+      itemId: menuItem.id,
+      qty: 1,
+    });
+
+    expect(addResult.ok).toBe(true);
+
+    const updatedMenuItem = await store.updateMenuItem(menuItem.id, {
+      price: menuItem.price + 5,
+      version: menuItem.version,
+      changeReason: "Price changed before cart clear",
+    });
+
+    expect(updatedMenuItem).not.toBeNull();
+    expect(store.getMenu().find((item) => item.id === menuItem.id)).toBeUndefined();
+
+    const removeResult = await store.updateOrderItem(currentOrder.id, {
+      userId: currentUserId,
+      itemId: menuItem.id,
+      qty: 0,
+    });
+
+    expect(removeResult.ok).toBe(true);
+    if (removeResult.ok) {
+      expect(removeResult.order.items).toHaveLength(0);
+      expect(removeResult.order.total).toBe(0);
+    }
+  });
 });

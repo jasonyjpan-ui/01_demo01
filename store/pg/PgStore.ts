@@ -345,17 +345,12 @@ export class PgStore implements Store {
       return { ok: false, code: "ORDER_NOT_EDITABLE" };
     }
 
-    const menuItem = this.menu.find((item) => item.id === input.itemId);
-    if (!menuItem) {
-      return { ok: false, code: "MENU_ITEM_NOT_FOUND" };
-    }
-
     const existingOrderItemIndex = order.items.findIndex(
       (item) => item.item.id === input.itemId,
     );
 
-    if (existingOrderItemIndex !== -1) {
-      if (input.qty === 0) {
+    if (input.qty === 0) {
+      if (existingOrderItemIndex !== -1) {
         await getDb()
           .delete(orderItemsTable)
           .where(
@@ -365,7 +360,24 @@ export class PgStore implements Store {
             ),
           );
         order.items.splice(existingOrderItemIndex, 1);
-      } else {
+      }
+
+      order.total = calculateTotal(order.items);
+
+      await getDb()
+        .update(ordersTable)
+        .set({ total: order.total })
+        .where(eq(ordersTable.id, orderId));
+
+      return { ok: true, order };
+    }
+
+    const menuItem = this.menu.find((item) => item.id === input.itemId);
+    if (!menuItem) {
+      return { ok: false, code: "MENU_ITEM_NOT_FOUND" };
+    }
+
+    if (existingOrderItemIndex !== -1) {
         await getDb()
           .update(orderItemsTable)
           .set({ qty: input.qty, version: menuItem.version })
@@ -380,7 +392,6 @@ export class PgStore implements Store {
           target.qty = input.qty;
           target.item = { ...menuItem };
         }
-      }
     } else if (input.qty > 0) {
       await getDb().insert(orderItemsTable).values({
         orderId,
