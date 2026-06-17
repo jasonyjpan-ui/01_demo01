@@ -8,5 +8,10 @@ export interface Auth {
     email: string;
     password: string;
   }): { ok: true; user: SessionUser } | { ok: false; code: LoginErrorCode };
+  upsertGoogleUser?(input: {
+    email: string;
+    name: string;
+    googleSub: string;
+  }): Promise<SessionUser>;
   getUserById(userId: string): SessionUser | undefined;
 }

@@ -1,3 +1,5 @@
+import { mkdir, rename } from "node:fs/promises";
+import { dirname } from "node:path";
 import type { SessionUser } from "../shared/contracts.ts";
 import type { Auth } from "./Auth.ts";
 
@@ -6,10 +8,13 @@ interface StoredUser {
   email: string;
   name: string;
   password: string;
+  googleSub?: string;
 }
 
 interface DataStore {
   users: StoredUser[];
+  userIdCounter?: number;
+  [key: string]: unknown;
 }
 
 interface DemoAuthOptions {
@@ -38,6 +43,7 @@ function normalizeStoredUser(user: Partial<StoredUser>): StoredUser {
     email: user.email ?? "",
     name: user.name ?? "",
     password: user.password ?? "",
+    googleSub: user.googleSub,
   };
 }
 
@@ -67,6 +73,7 @@ const defaultUsers: StoredUser[] = [
 export class DemoAuth implements Auth {
   private readonly dataFilePath: string;
   private users: StoredUser[] = [];
+  private storeSnapshot: DataStore | null = null;
 
   constructor(options: DemoAuthOptions) {
     this.dataFilePath = options.dataFilePath;
@@ -77,6 +84,7 @@ export class DemoAuth implements Auth {
 
     if (!(await file.exists())) {
       this.users = [...defaultUsers];
+      this.storeSnapshot = { users: this.users, userIdCounter: this.users.length };
       return;
     }
 
@@ -87,8 +95,14 @@ export class DemoAuth implements Auth {
       this.users = Array.isArray(parsed.users)
         ? parsed.users.map((user) => normalizeStoredUser(user))
         : [...defaultUsers];
+      this.storeSnapshot = {
+        ...parsed,
+        users: this.users,
+        userIdCounter: parsed.userIdCounter,
+      };
     } catch {
       this.users = [...defaultUsers];
+      this.storeSnapshot = { users: this.users, userIdCounter: this.users.length };
     }
   }
 
@@ -112,6 +126,40 @@ export class DemoAuth implements Auth {
     };
   }
 
+  async upsertGoogleUser(input: {
+    email: string;
+    name: string;
+    googleSub: string;
+  }): Promise<SessionUser> {
+    const normalizedEmail = input.email.trim().toLowerCase();
+    const existingUser = this.users.find(
+      (user) =>
+        user.email.toLowerCase() === normalizedEmail ||
+        user.googleSub === input.googleSub,
+    );
+
+    if (existingUser) {
+      existingUser.email = normalizedEmail;
+      existingUser.name = input.name || existingUser.name || normalizedEmail;
+      existingUser.googleSub = input.googleSub;
+      await this.persist();
+      return toSessionUser(existingUser);
+    }
+
+    const nextId = this.getNextUserId();
+    const newUser: StoredUser = {
+      id: nextId,
+      email: normalizedEmail,
+      name: input.name || normalizedEmail,
+      password: "",
+      googleSub: input.googleSub,
+    };
+
+    this.users.push(newUser);
+    await this.persist();
+    return toSessionUser(newUser);
+  }
+
   getUserById(userId: string): SessionUser | undefined {
     const user = this.users.find((targetUser) => targetUser.id === userId);
     if (!user) {
@@ -119,5 +167,31 @@ export class DemoAuth implements Auth {
     }
 
     return toSessionUser(user);
+  }
+
+  private getNextUserId(): string {
+    const maxId = this.users.reduce((max, user) => {
+      const parsed = Number.parseInt(user.id, 10);
+      return Number.isInteger(parsed) ? Math.max(max, parsed) : max;
+    }, this.storeSnapshot?.userIdCounter ?? 0);
+
+    return String(maxId + 1).padStart(4, "0");
+  }
+
+  private async persist(): Promise<void> {
+    const snapshot: DataStore = {
+      ...(this.storeSnapshot ?? {}),
+      users: this.users,
+      userIdCounter: Math.max(
+        this.users.length,
+        ...this.users.map((user) => Number.parseInt(user.id, 10) || 0),
+      ),
+    };
+
+    await mkdir(dirname(this.dataFilePath), { recursive: true });
+    const tmpPath = `${this.dataFilePath}.auth-${crypto.randomUUID()}.tmp`;
+    await Bun.write(tmpPath, `${JSON.stringify(snapshot, null, 2)}\n`);
+    await rename(tmpPath, this.dataFilePath);
+    this.storeSnapshot = snapshot;
   }
 }

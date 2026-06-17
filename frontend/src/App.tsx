@@ -51,11 +51,42 @@ function formatDateTime(value?: string) {
   return new Date(value).toLocaleString("zh-TW");
 }
 
+function decodeGoogleLoginUser(rawUser: string): SafeUser | null {
+  try {
+    const base64 = rawUser.replace(/-/g, "+").replace(/_/g, "/");
+    const padded = base64.padEnd(base64.length + ((4 - base64.length % 4) % 4), "=");
+    const decoded = decodeURIComponent(
+      Array.from(atob(padded), (char) =>
+        `%${char.charCodeAt(0).toString(16).padStart(2, "0")}`,
+      ).join(""),
+    );
+    const parsed = JSON.parse(decoded) as Partial<SafeUser>;
+
+    if (
+      typeof parsed.id === "string" &&
+      typeof parsed.email === "string" &&
+      typeof parsed.name === "string"
+    ) {
+      return {
+        id: parsed.id,
+        email: parsed.email,
+        name: parsed.name,
+      };
+    }
+  } catch (error) {
+    console.error(error);
+  }
+
+  return null;
+}
+
 export default function App() {
   const [user, setUser] = useState<SafeUser | null>(null);
   const [emailInput, setEmailInput] = useState("demo@example.com");
   const [passwordInput, setPasswordInput] = useState("1234");
   const [authError, setAuthError] = useState("");
+  const [googleLoginConfigured, setGoogleLoginConfigured] = useState(false);
+  const [googleRedirectUri, setGoogleRedirectUri] = useState("");
   const [isLoggingIn, setIsLoggingIn] = useState(false);
   const [items, setItems] = useState<MenuItem[]>([]);
   const [archivedItems, setArchivedItems] = useState<MenuItem[]>([]);
@@ -192,8 +223,35 @@ export default function App() {
   useEffect(() => {
     let mounted = true;
 
+    const currentUrl = new URL(window.location.href);
+    const googleLoginResult = currentUrl.searchParams.get("googleLogin");
+    const googleLoginUser = currentUrl.searchParams.get("user");
+    const googleLoginMessage = currentUrl.searchParams.get("message");
+
+    if (googleLoginResult) {
+      currentUrl.searchParams.delete("googleLogin");
+      currentUrl.searchParams.delete("user");
+      currentUrl.searchParams.delete("message");
+      window.history.replaceState({}, "", currentUrl.toString());
+
+      if (googleLoginResult === "success" && googleLoginUser) {
+        const decodedUser = decodeGoogleLoginUser(googleLoginUser);
+        if (decodedUser) {
+          setUser(decodedUser);
+          window.localStorage.setItem(
+            USER_STORAGE_KEY,
+            JSON.stringify(decodedUser),
+          );
+        } else {
+          setAuthError("Google 登入回傳資料無法解析。");
+        }
+      } else {
+        setAuthError(googleLoginMessage || "Google 登入失敗。");
+      }
+    }
+
     const savedUser = window.localStorage.getItem(USER_STORAGE_KEY);
-    if (savedUser) {
+    if (!googleLoginResult && savedUser) {
       try {
         const parsedUser = JSON.parse(savedUser) as Partial<SafeUser>;
         const normalizedUserId = normalizeUserId(parsedUser.id);
@@ -213,7 +271,24 @@ export default function App() {
       }
     }
 
-    Promise.all([loadMenu(), loadArchivedMenu()])
+    const loadGoogleStatus = async () => {
+      const response = await fetch(buildApiUrl("/api/auth/google/status"));
+      if (!response.ok) {
+        return;
+      }
+
+      const payload = (await response.json()) as ApiDataResponse<{
+        configured: boolean;
+        redirectUri: string;
+      }>;
+
+      if (mounted) {
+        setGoogleLoginConfigured(Boolean(payload.data?.configured));
+        setGoogleRedirectUri(payload.data?.redirectUri ?? "");
+      }
+    };
+
+    Promise.all([loadMenu(), loadArchivedMenu(), loadGoogleStatus()])
       .catch((fetchError) => {
         if (mounted) {
           setError("菜單讀取失敗，請稍後再試。");
@@ -381,6 +456,10 @@ export default function App() {
     setAuthError("");
     setActionError("");
     resetCartState();
+  }
+
+  function handleGoogleLogin() {
+    window.location.href = buildApiUrl("/api/auth/google/start");
   }
 
   async function addToCart(item: MenuItem): Promise<void> {
@@ -903,6 +982,24 @@ export default function App() {
               >
                 {isLoggingIn ? "登入中..." : "登入"}
               </button>
+              <button
+                className="btn btn-outline"
+                onClick={handleGoogleLogin}
+                disabled={!googleLoginConfigured}
+                title={
+                  googleLoginConfigured
+                    ? "使用 Google/Gmail 帳號登入"
+                    : `尚未設定 Google OAuth。Redirect URI：${googleRedirectUri}`
+                }
+              >
+                使用 Google/Gmail 登入
+              </button>
+              {!googleLoginConfigured ? (
+                <p className="text-xs opacity-70">
+                  尚未設定 Google OAuth，請先在環境變數加入 Google client
+                  ID/secret。Redirect URI：{googleRedirectUri || "未取得"}
+                </p>
+              ) : null}
             </div>
           </section>
         ) : null}

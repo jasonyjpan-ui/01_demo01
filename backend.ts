@@ -32,6 +32,18 @@ const auth = createAuth(
 );
 const hasPublicAssets =
   existsSync("./public") && existsSync("./public/index.html");
+const googleClientId = process.env.GOOGLE_CLIENT_ID;
+const googleClientSecret = process.env.GOOGLE_CLIENT_SECRET;
+const googleRedirectUri =
+  process.env.GOOGLE_REDIRECT_URI ??
+  `http://${host}:${port}/api/auth/google/callback`;
+const googleLoginRedirectUrl =
+  process.env.GOOGLE_LOGIN_REDIRECT_URL ??
+  process.env.FRONTEND_URL ??
+  `http://${host}:5173`;
+
+const googleOAuthStates = new Map<string, number>();
+const googleOAuthStateTtlMs = 10 * 60 * 1000;
 
 const apiErrorResponseSchema = t.Object({
   error: t.String(),
@@ -125,6 +137,42 @@ const healthResponseSchema = t.Object({
 });
 
 const app = new Elysia();
+
+function redirect(location: string, status = 302) {
+  return new Response(null, {
+    status,
+    headers: { Location: location },
+  });
+}
+
+function cleanupGoogleOAuthStates() {
+  const now = Date.now();
+  for (const [state, expiresAt] of googleOAuthStates) {
+    if (expiresAt <= now) {
+      googleOAuthStates.delete(state);
+    }
+  }
+}
+
+function buildGoogleLoginResultUrl(
+  result:
+    | { ok: true; user: { id: string; email: string; name: string } }
+    | { ok: false; error: string },
+) {
+  const target = new URL(googleLoginRedirectUrl);
+  if (result.ok) {
+    target.searchParams.set("googleLogin", "success");
+    target.searchParams.set(
+      "user",
+      Buffer.from(JSON.stringify(result.user), "utf8").toString("base64url"),
+    );
+  } else {
+    target.searchParams.set("googleLogin", "error");
+    target.searchParams.set("message", result.error);
+  }
+
+  return target.toString();
+}
 
 if (hasPublicAssets) {
   app.use(
@@ -228,6 +276,189 @@ app.post(
     response: {
       200: loginResponseSchema,
       401: apiErrorResponseSchema,
+    },
+  },
+);
+
+app.get(
+  "/api/auth/google/status",
+  () => ({
+    data: {
+      configured: Boolean(
+        googleClientId && googleClientSecret && auth.upsertGoogleUser,
+      ),
+      redirectUri: googleRedirectUri,
+    },
+  }),
+  {
+    detail: {
+      tags: ["auth"],
+      summary: "Get Google login configuration status",
+      description:
+        "Return whether Google OAuth login has enough environment configuration to start.",
+    },
+    response: {
+      200: t.Object({
+        data: t.Object({
+          configured: t.Boolean(),
+          redirectUri: t.String(),
+        }),
+      }),
+    },
+  },
+);
+
+app.get(
+  "/api/auth/google/start",
+  ({ set }) => {
+    if (!googleClientId || !googleClientSecret || !auth.upsertGoogleUser) {
+      set.status = 503;
+      return {
+        error:
+          "Google login is not configured. Please set GOOGLE_CLIENT_ID and GOOGLE_CLIENT_SECRET.",
+      };
+    }
+
+    cleanupGoogleOAuthStates();
+    const state = crypto.randomUUID();
+    googleOAuthStates.set(state, Date.now() + googleOAuthStateTtlMs);
+
+    const authorizationUrl = new URL(
+      "https://accounts.google.com/o/oauth2/v2/auth",
+    );
+    authorizationUrl.searchParams.set("client_id", googleClientId);
+    authorizationUrl.searchParams.set("redirect_uri", googleRedirectUri);
+    authorizationUrl.searchParams.set("response_type", "code");
+    authorizationUrl.searchParams.set("scope", "openid profile email");
+    authorizationUrl.searchParams.set("state", state);
+    authorizationUrl.searchParams.set("prompt", "select_account");
+
+    return redirect(authorizationUrl.toString());
+  },
+  {
+    detail: {
+      tags: ["auth"],
+      summary: "Start Google OAuth login",
+      description: "Redirect the browser to Google OAuth authorization.",
+    },
+    response: {
+      302: t.Void(),
+      503: apiErrorResponseSchema,
+    },
+  },
+);
+
+app.get(
+  "/api/auth/google/callback",
+  async ({ query }) => {
+    if (!googleClientId || !googleClientSecret || !auth.upsertGoogleUser) {
+      return redirect(
+        buildGoogleLoginResultUrl({
+          ok: false,
+          error: "Google login is not configured.",
+        }),
+      );
+    }
+
+    const state = query.state;
+    const code = query.code;
+    cleanupGoogleOAuthStates();
+
+    if (
+      typeof state !== "string" ||
+      typeof code !== "string" ||
+      !googleOAuthStates.has(state)
+    ) {
+      return redirect(
+        buildGoogleLoginResultUrl({
+          ok: false,
+          error: "Google login state is invalid or expired.",
+        }),
+      );
+    }
+
+    googleOAuthStates.delete(state);
+
+    try {
+      const tokenResponse = await fetch("https://oauth2.googleapis.com/token", {
+        method: "POST",
+        headers: { "Content-Type": "application/x-www-form-urlencoded" },
+        body: new URLSearchParams({
+          code,
+          client_id: googleClientId,
+          client_secret: googleClientSecret,
+          redirect_uri: googleRedirectUri,
+          grant_type: "authorization_code",
+        }),
+      });
+
+      if (!tokenResponse.ok) {
+        throw new Error(`Token exchange failed: HTTP ${tokenResponse.status}`);
+      }
+
+      const tokenPayload = (await tokenResponse.json()) as {
+        access_token?: string;
+      };
+
+      if (!tokenPayload.access_token) {
+        throw new Error("Google token response did not include access_token.");
+      }
+
+      const userInfoResponse = await fetch(
+        "https://openidconnect.googleapis.com/v1/userinfo",
+        {
+          headers: {
+            Authorization: `Bearer ${tokenPayload.access_token}`,
+          },
+        },
+      );
+
+      if (!userInfoResponse.ok) {
+        throw new Error(`Userinfo failed: HTTP ${userInfoResponse.status}`);
+      }
+
+      const profile = (await userInfoResponse.json()) as {
+        sub?: string;
+        email?: string;
+        email_verified?: boolean;
+        name?: string;
+      };
+
+      if (!profile.sub || !profile.email || profile.email_verified === false) {
+        throw new Error("Google account email is unavailable or unverified.");
+      }
+
+      const user = await auth.upsertGoogleUser({
+        email: profile.email,
+        name: profile.name ?? profile.email,
+        googleSub: profile.sub,
+      });
+
+      return redirect(buildGoogleLoginResultUrl({ ok: true, user }));
+    } catch (error) {
+      console.error(error);
+      return redirect(
+        buildGoogleLoginResultUrl({
+          ok: false,
+          error:
+            error instanceof Error
+              ? error.message
+              : "Google login failed.",
+        }),
+      );
+    }
+  },
+  {
+    query: t.Object({
+      code: t.Optional(t.String()),
+      state: t.Optional(t.String()),
+      error: t.Optional(t.String()),
+    }),
+    detail: {
+      tags: ["auth"],
+      summary: "Handle Google OAuth callback",
+      description:
+        "Exchange Google OAuth code for user info, upsert a local account, and redirect back to the app.",
     },
   },
 );
