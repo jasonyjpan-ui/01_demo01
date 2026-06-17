@@ -713,7 +713,9 @@ export default function App() {
     <div className="min-h-screen bg-base-200">
       <div className="navbar flex-col items-stretch gap-2 bg-base-100 shadow-lg md:flex-row md:items-center">
         <div className="flex-1">
-          <a className="btn btn-ghost text-2xl normal-case">早安早餐店</a>
+          <a className="btn btn-ghost text-2xl normal-case">
+            🌅 聯大資工早餐店
+          </a>
         </div>
         <div className="flex-none">
           <div className="flex flex-wrap items-center gap-2 md:justify-end">
