@@ -333,11 +333,24 @@
             "version": 1
           },
           "qty": 1
+        },
+        {
+          "item": {
+            "id": 5,
+            "name": "起司蔬菜蛋餅",
+            "price": 45,
+            "category": "餐點",
+            "description": "加入起司與高麗菜絲，口感滑順、起司香氣濃郁，適合想吃清爽一點的客人。",
+            "image_url": "/imgs/menu/cheese-vegetable-egg-roll.webp",
+            "version": 1
+          },
+          "qty": 1
         }
       ],
-      "total": 30,
-      "status": "pending",
-      "createdAt": "2026-06-16T13:00:46.470Z"
+      "total": 75,
+      "status": "submitted",
+      "createdAt": "2026-06-16T13:00:46.470Z",
+      "submittedAt": "2026-06-17T15:03:13.754Z"
     }
   ],
   "userIdCounter": 2,

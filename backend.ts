@@ -52,6 +52,27 @@ const menuItemSchema = t.Object({
   description: t.String(),
   image_url: t.String({ minLength: 1 }),
   version: t.Number({ minimum: 1 }),
+  changeReason: t.Optional(t.String()),
+  previousPrice: t.Optional(t.Number({ minimum: 0 })),
+  changedAt: t.Optional(t.String()),
+});
+
+const menuVersionMismatchResponseSchema = t.Object({
+  error: t.String(),
+  details: t.Optional(
+    t.Object({
+      staleItems: t.Array(
+        t.Object({
+          id: t.Number({ minimum: 1 }),
+          name: t.String(),
+          orderedPrice: t.Number({ minimum: 0 }),
+          currentPrice: t.Optional(t.Number({ minimum: 0 })),
+          reason: t.String(),
+        }),
+      ),
+      message: t.String(),
+    }),
+  ),
 });
 
 const orderItemSchema = t.Object({
@@ -684,7 +705,7 @@ app.post(
       400: apiErrorResponseSchema,
       403: apiErrorResponseSchema,
       404: apiErrorResponseSchema,
-      409: apiErrorResponseSchema,
+      409: menuVersionMismatchResponseSchema,
       500: apiErrorResponseSchema,
     },
   },
