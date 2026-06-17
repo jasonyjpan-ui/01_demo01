@@ -38,11 +38,17 @@ export interface Store {
   ): Promise<MenuItem | null>;
   deleteMenuItem(menuId: number): Promise<MenuItem | null>;
   getMenuItemHistory?(menuId: number): Promise<Array<{
+    id?: number;
+    logicalId?: number;
+    entityId?: string;
     version: number;
     name: string;
     price: number;
     previousPrice?: number;
     changeReason?: string;
+    isCurrentVersion?: boolean;
+    supersedes?: number;
+    createdAt?: string;
     changedAt?: string;
   }>>;
 

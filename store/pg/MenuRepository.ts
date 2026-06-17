@@ -1,7 +1,27 @@
-import { eq, sql } from "drizzle-orm";
+import { and, eq, sql } from "drizzle-orm";
 import type { MenuItem } from "../../shared/contracts.ts";
 import { getDb } from "../../db/client.ts";
 import { menuItemsTable } from "../../db/schema.ts";
+
+function toMenuItem(row: typeof menuItemsTable.$inferSelect): MenuItem {
+  return {
+    id: row.id,
+    logicalId: row.logicalId,
+    entityId: row.entityId,
+    name: row.name,
+    price: row.price,
+    category: row.category,
+    description: row.description,
+    image_url: row.imageUrl,
+    version: row.version,
+    isCurrentVersion: row.isCurrentVersion,
+    supersedes: row.supersedes || undefined,
+    changeReason: row.changeReason || undefined,
+    previousPrice: row.previousPrice || undefined,
+    createdAt: row.createdAt?.toISOString(),
+    changedAt: row.changedAt?.toISOString(),
+  };
+}
 
 export class MenuRepository {
   async createMenuItem(input: {
@@ -11,15 +31,29 @@ export class MenuRepository {
     description: string;
     image_url: string;
   }): Promise<MenuItem> {
+    const result = await getDb().execute<{ id: number }>(
+      sql`select nextval('menu_items_id_seq')::int as id`,
+    );
+    const nextId = result.rows[0]?.id;
+    if (!nextId) {
+      throw new Error("Failed to allocate menu item id");
+    }
+
     const [inserted] = await getDb()
       .insert(menuItemsTable)
       .values({
+        id: nextId,
+        logicalId: nextId,
+        entityId: crypto.randomUUID(),
         name: input.name,
         price: input.price,
         category: input.category,
         description: input.description,
         imageUrl: input.image_url,
         version: 1,
+        isCurrentVersion: true,
+        changeReason: "Initial creation",
+        createdAt: new Date(),
       })
       .returning();
 
@@ -27,15 +61,7 @@ export class MenuRepository {
       throw new Error("Failed to insert menu item");
     }
 
-    return {
-      id: inserted.id,
-      name: inserted.name,
-      price: inserted.price,
-      category: inserted.category,
-      description: inserted.description,
-      image_url: inserted.imageUrl,
-      version: inserted.version,
-    };
+    return toMenuItem(inserted);
   }
 
   async updateMenuItem(
@@ -50,79 +76,71 @@ export class MenuRepository {
       changeReason?: string;
     },
   ): Promise<MenuItem | null> {
-    // 先查詢原始菜單項目以獲得舊價格
-    const [original] = await getDb()
-      .select()
-      .from(menuItemsTable)
-      .where(eq(menuItemsTable.id, menuId));
+    return await getDb().transaction(async (tx) => {
+      const [original] = await tx
+        .select()
+        .from(menuItemsTable)
+        .where(
+          and(
+            eq(menuItemsTable.id, menuId),
+            eq(menuItemsTable.isCurrentVersion, true),
+          ),
+        );
 
-    if (!original) {
-      return null;
-    }
+      if (!original) {
+        return null;
+      }
 
-    const updates: Record<string, unknown> = {
-      ...(patch.name !== undefined ? { name: patch.name } : {}),
-      ...(patch.price !== undefined ? { price: patch.price } : {}),
-      ...(patch.category !== undefined ? { category: patch.category } : {}),
-      ...(patch.description !== undefined ? { description: patch.description } : {}),
-      ...(patch.image_url !== undefined ? { imageUrl: patch.image_url } : {}),
-      ...(patch.changeReason !== undefined ? { changeReason: patch.changeReason } : {}),
-      changedAt: new Date(),
-    };
+      if (patch.version !== undefined && patch.version !== original.version) {
+        return null;
+      }
 
-    // 記錄前一個價格
-    if (patch.price !== undefined && patch.price !== original.price) {
-      updates.previousPrice = original.price;
-    }
+      const changedAt = new Date();
 
-    if (patch.version !== undefined) {
-      updates.version = patch.version + 1;
-    } else {
-      updates.version = sql`version + 1`;
-    }
+      await tx
+        .update(menuItemsTable)
+        .set({ isCurrentVersion: false, changedAt })
+        .where(eq(menuItemsTable.id, menuId));
 
-    let query = getDb().update(menuItemsTable).set(updates).where(eq(menuItemsTable.id, menuId));
-    if (patch.version !== undefined) {
-      query = query.where(eq(menuItemsTable.version, patch.version));
-    }
+      const [inserted] = await tx
+        .insert(menuItemsTable)
+        .values({
+          logicalId: original.logicalId,
+          entityId: original.entityId,
+          name: patch.name ?? original.name,
+          price: patch.price ?? original.price,
+          category: patch.category ?? original.category,
+          description: patch.description ?? original.description,
+          imageUrl: patch.image_url ?? original.imageUrl,
+          version: original.version + 1,
+          isCurrentVersion: true,
+          supersedes: original.id,
+          changeReason: patch.changeReason,
+          previousPrice:
+            patch.price !== undefined && patch.price !== original.price
+              ? original.price
+              : original.previousPrice,
+          createdAt: changedAt,
+          changedAt,
+        })
+        .returning();
 
-    const [updated] = await query.returning();
-    if (!updated) {
-      return null;
-    }
-
-    return {
-      id: updated.id,
-      name: updated.name,
-      price: updated.price,
-      category: updated.category,
-      description: updated.description,
-      image_url: updated.imageUrl,
-      version: updated.version,
-      changeReason: updated.changeReason || undefined,
-      previousPrice: updated.previousPrice || undefined,
-      changedAt: updated.changedAt?.toISOString(),
-    };
+      return inserted ? toMenuItem(inserted) : null;
+    });
   }
 
   async deleteMenuItem(menuId: number): Promise<MenuItem | null> {
     const [removed] = await getDb()
-      .delete(menuItemsTable)
-      .where(eq(menuItemsTable.id, menuId))
+      .update(menuItemsTable)
+      .set({ isCurrentVersion: false, changedAt: new Date() })
+      .where(
+        and(
+          eq(menuItemsTable.id, menuId),
+          eq(menuItemsTable.isCurrentVersion, true),
+        ),
+      )
       .returning();
 
-    if (!removed) {
-      return null;
-    }
-
-    return {
-      id: removed.id,
-      name: removed.name,
-      price: removed.price,
-      category: removed.category,
-      description: removed.description,
-      image_url: removed.imageUrl,
-      version: removed.version,
-    };
+    return removed ? toMenuItem(removed) : null;
   }
 }

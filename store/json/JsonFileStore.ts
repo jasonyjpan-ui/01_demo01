@@ -62,7 +62,7 @@ const defaultMenu: MenuItem[] = [
 ];
 
 function cloneDefaultMenu(): MenuItem[] {
-  return defaultMenu.map((item) => ({ ...item }));
+  return defaultMenu.map((item) => normalizeMenuItem(item));
 }
 
 function calculateOrderTotal(items: OrderItem[]): number {
@@ -72,14 +72,25 @@ function calculateOrderTotal(items: OrderItem[]): number {
 }
 
 function normalizeMenuItem(item: Partial<MenuItem>): MenuItem {
+  const id = item.id ?? 0;
+  const logicalId = item.logicalId ?? id;
+
   return {
-    id: item.id ?? 0,
+    id,
+    logicalId,
+    entityId: item.entityId ?? `menu-${logicalId}`,
     name: item.name ?? "",
     price: item.price ?? 0,
     category: item.category ?? "",
     description: item.description ?? "",
     image_url: item.image_url ?? "",
     version: item.version ?? 1,
+    isCurrentVersion: item.isCurrentVersion ?? true,
+    supersedes: item.supersedes,
+    changeReason: item.changeReason,
+    previousPrice: item.previousPrice,
+    createdAt: item.createdAt,
+    changedAt: item.changedAt,
   };
 }
 
@@ -193,7 +204,7 @@ export class JsonFileStore implements Store {
   }
 
   getMenu(): ReadonlyArray<MenuItem> {
-    return this.menu;
+    return this.menu.filter((item) => item.isCurrentVersion !== false);
   }
 
   async createMenuItem(input: {
@@ -203,14 +214,20 @@ export class JsonFileStore implements Store {
     description: string;
     image_url: string;
   }): Promise<MenuItem> {
+    const id = ++this.menuIdCounter;
     const newMenuItem: MenuItem = {
-      id: ++this.menuIdCounter,
+      id,
+      logicalId: id,
+      entityId: crypto.randomUUID(),
       name: input.name,
       price: input.price,
       category: input.category,
       description: input.description,
       image_url: input.image_url,
       version: 1,
+      isCurrentVersion: true,
+      changeReason: "Initial creation",
+      createdAt: new Date().toISOString(),
     };
 
     this.menu.push(newMenuItem);
@@ -231,7 +248,9 @@ export class JsonFileStore implements Store {
       changeReason?: string;
     },
   ): Promise<MenuItem | null> {
-    const menuItem = this.menu.find((item) => item.id === menuId);
+    const menuItem = this.menu.find(
+      (item) => item.id === menuId && item.isCurrentVersion !== false,
+    );
     if (!menuItem) {
       return null;
     }
@@ -241,25 +260,79 @@ export class JsonFileStore implements Store {
     }
 
     const oldPrice = menuItem.price;
-    menuItem.name = patch.name ?? menuItem.name;
-    menuItem.price = patch.price ?? menuItem.price;
-    menuItem.category = patch.category ?? menuItem.category;
-    menuItem.description = patch.description ?? menuItem.description;
-    menuItem.image_url = patch.image_url ?? menuItem.image_url;
-    if (patch.changeReason !== undefined) {
-      (menuItem as any).changeReason = patch.changeReason;
-    }
-    if (patch.price !== undefined && patch.price !== oldPrice) {
-      (menuItem as any).previousPrice = oldPrice;
-    }
-    menuItem.version = menuItem.version + 1;
+    const changedAt = new Date().toISOString();
+    const newMenuItem: MenuItem = {
+      ...menuItem,
+      id: ++this.menuIdCounter,
+      name: patch.name ?? menuItem.name,
+      price: patch.price ?? menuItem.price,
+      category: patch.category ?? menuItem.category,
+      description: patch.description ?? menuItem.description,
+      image_url: patch.image_url ?? menuItem.image_url,
+      version: menuItem.version + 1,
+      isCurrentVersion: true,
+      supersedes: menuItem.id,
+      changeReason: patch.changeReason,
+      previousPrice:
+        patch.price !== undefined && patch.price !== oldPrice
+          ? oldPrice
+          : menuItem.previousPrice,
+      createdAt: changedAt,
+      changedAt,
+    };
+
+    menuItem.isCurrentVersion = false;
+    menuItem.changedAt = changedAt;
+    this.menu.push(newMenuItem);
 
     await this.persist();
 
-    return menuItem;
+    return newMenuItem;
   }
 
   async getMenuItemHistory?(
+    menuId: number,
+  ): Promise<Array<{
+    id?: number;
+    logicalId?: number;
+    entityId?: string;
+    version: number;
+    name: string;
+    price: number;
+    previousPrice?: number;
+    changeReason?: string;
+    isCurrentVersion?: boolean;
+    supersedes?: number;
+    createdAt?: string;
+    changedAt?: string;
+  }>> {
+    const menuItem = this.menu.find((item) => item.id === menuId);
+    if (!menuItem) {
+      return [];
+    }
+
+    const logicalId = menuItem.logicalId ?? menuItem.id;
+
+    return this.menu
+      .filter((item) => (item.logicalId ?? item.id) === logicalId)
+      .sort((a, b) => b.version - a.version)
+      .map((item) => ({
+        id: item.id,
+        logicalId: item.logicalId,
+        entityId: item.entityId,
+        version: item.version,
+        name: item.name,
+        price: item.price,
+        previousPrice: item.previousPrice,
+        changeReason: item.changeReason,
+        isCurrentVersion: item.isCurrentVersion,
+        supersedes: item.supersedes,
+        createdAt: item.createdAt,
+        changedAt: item.changedAt,
+      }));
+  }
+
+  async getMenuItemHistoryLegacy(
     menuId: number,
   ): Promise<Array<{
     version: number;
@@ -285,12 +358,18 @@ export class JsonFileStore implements Store {
   }
 
   async deleteMenuItem(menuId: number): Promise<MenuItem | null> {
-    const targetIndex = this.menu.findIndex((item) => item.id === menuId);
+    const targetIndex = this.menu.findIndex(
+      (item) => item.id === menuId && item.isCurrentVersion !== false,
+    );
     if (targetIndex === -1) {
       return null;
     }
 
-    const [removedMenuItem] = this.menu.splice(targetIndex, 1);
+    const removedMenuItem = this.menu[targetIndex];
+    if (removedMenuItem) {
+      removedMenuItem.isCurrentVersion = false;
+      removedMenuItem.changedAt = new Date().toISOString();
+    }
     await this.persist();
 
     return removedMenuItem ?? null;
@@ -377,7 +456,7 @@ export class JsonFileStore implements Store {
       return { ok: false, code: "ORDER_NOT_EDITABLE" };
     }
 
-    const menuItem = this.menu.find((item) => item.id === input.itemId);
+    const menuItem = this.getMenu().find((item) => item.id === input.itemId);
     if (!menuItem) {
       return { ok: false, code: "MENU_ITEM_NOT_FOUND" };
     }
@@ -441,7 +520,9 @@ export class JsonFileStore implements Store {
     }
 
     for (const orderItem of order.items) {
-      const menuItem = this.menu.find((item) => item.id === orderItem.item.id);
+      const menuItem = this.getMenu().find(
+        (item) => item.id === orderItem.item.id,
+      );
       if (!menuItem || menuItem.version !== orderItem.item.version) {
         return { ok: false, code: "MENU_VERSION_MISMATCH" };
       }

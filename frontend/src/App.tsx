@@ -34,6 +34,14 @@ function normalizeUserId(rawId: unknown): string | null {
   return null;
 }
 
+function sameLogicalItem(a: MenuItem, b: MenuItem): boolean {
+  return (
+    a.id === b.id ||
+    (a.logicalId !== undefined && b.logicalId !== undefined &&
+      a.logicalId === b.logicalId)
+  );
+}
+
 export default function App() {
   const [user, setUser] = useState<SafeUser | null>(null);
   const [emailInput, setEmailInput] = useState("demo@example.com");
@@ -71,6 +79,7 @@ export default function App() {
   const [currentOrder, setCurrentOrder] = useState<Order | null>(null);
 
   function syncCartFromOrder(order: Order) {
+    setCurrentOrder(order);
     const nextQtyByItemId = order.items.reduce(
       (acc, orderItem) => {
         acc[orderItem.item.id] = orderItem.qty;
@@ -87,6 +96,19 @@ export default function App() {
     setOrderId(null);
     setCartQtyByItemId({});
     setCartTotal(0);
+    setCurrentOrder(null);
+  }
+
+  async function loadMenu(): Promise<MenuItem[]> {
+    const response = await fetch(buildApiUrl("/api/menu"));
+    if (!response.ok) {
+      throw new Error(`Load menu failed: HTTP ${response.status}`);
+    }
+
+    const payload = (await response.json()) as ApiDataResponse<MenuItem[]>;
+    const fetchedItems = Array.isArray(payload?.data) ? payload.data : [];
+    setItems(fetchedItems);
+    return fetchedItems;
   }
 
   async function loadCurrentOrder(targetUserId: string): Promise<Order | null> {
@@ -235,11 +257,17 @@ export default function App() {
 
   const cartDetails = useMemo(() => {
     const itemById = new Map(items.map((item) => [item.id, item]));
+    const orderItemById = new Map(
+      (currentOrder?.items ?? []).map((orderItem) => [
+        orderItem.item.id,
+        orderItem.item,
+      ]),
+    );
 
     return Object.entries(cartQtyByItemId)
       .map(([itemIdText, qty]) => {
         const itemId = Number(itemIdText);
-        const item = itemById.get(itemId);
+        const item = itemById.get(itemId) ?? orderItemById.get(itemId);
         if (!item || qty <= 0) {
           return null;
         }
@@ -252,7 +280,7 @@ export default function App() {
         };
       })
       .filter((entry) => entry !== null);
-  }, [cartQtyByItemId, items]);
+  }, [cartQtyByItemId, currentOrder, items]);
 
   async function ensureOrder(): Promise<number> {
     if (!user) {
@@ -503,7 +531,7 @@ export default function App() {
     // 找出失效項目並移除
     const staleItemIds = new Set<number>();
     currentOrder.items.forEach((orderItem) => {
-      const currentMenu = items.find((m) => m.id === orderItem.item.id);
+      const currentMenu = items.find((m) => sameLogicalItem(m, orderItem.item));
       if (!currentMenu || currentMenu.version !== orderItem.item.version) {
         staleItemIds.add(orderItem.item.id);
       }
@@ -855,7 +883,6 @@ export default function App() {
       {/* 訂單提交錯誤模態框 */}
       <OrderSubmitError
         error={submitError}
-        order={currentOrder}
         onDismiss={() => setSubmitError(null)}
         onRetryRefresh={handleRefreshMenuFromError}
       />

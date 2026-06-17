@@ -46,14 +46,19 @@ const safeUserSchema = t.Object({
 
 const menuItemSchema = t.Object({
   id: t.Number({ minimum: 1 }),
+  logicalId: t.Optional(t.Number({ minimum: 1 })),
+  entityId: t.Optional(t.String()),
   name: t.String({ minLength: 1 }),
   price: t.Number({ minimum: 0 }),
   category: t.String({ minLength: 1 }),
   description: t.String(),
   image_url: t.String({ minLength: 1 }),
   version: t.Number({ minimum: 1 }),
+  isCurrentVersion: t.Optional(t.Boolean()),
+  supersedes: t.Optional(t.Number({ minimum: 1 })),
   changeReason: t.Optional(t.String()),
   previousPrice: t.Optional(t.Number({ minimum: 0 })),
+  createdAt: t.Optional(t.String()),
   changedAt: t.Optional(t.String()),
 });
 
@@ -360,11 +365,17 @@ app.get(
     response: {
       200: t.Object({
         data: t.Array(t.Object({
+          id: t.Optional(t.Number()),
+          logicalId: t.Optional(t.Number()),
+          entityId: t.Optional(t.String()),
           version: t.Number(),
           name: t.String(),
           price: t.Number(),
           previousPrice: t.Optional(t.Number()),
           changeReason: t.Optional(t.String()),
+          isCurrentVersion: t.Optional(t.Boolean()),
+          supersedes: t.Optional(t.Number()),
+          createdAt: t.Optional(t.String()),
           changedAt: t.Optional(t.String()),
         })),
       }),
@@ -652,16 +663,26 @@ app.post(
       // 返回詳細的版本不匹配信息
       const order = store.getCurrentOrderByUserId(body.userId);
       if (order) {
+        const currentMenuItems = store.getMenu();
         const staleItems = order.items
           .filter((orderItem) => {
-            const currentMenu = store.getMenu().find((m) => m.id === orderItem.item.id);
+            const currentMenu = currentMenuItems.find(
+              (m) =>
+                m.id === orderItem.item.id ||
+                (m.logicalId !== undefined &&
+                  m.logicalId === orderItem.item.logicalId),
+            );
             return !currentMenu || currentMenu.version !== orderItem.item.version;
           })
           .map((oi) => ({
             id: oi.item.id,
             name: oi.item.name,
             orderedPrice: oi.item.price,
-            currentPrice: store.getMenu().find((m) => m.id === oi.item.id)?.price,
+            currentPrice: currentMenuItems.find(
+              (m) =>
+                m.id === oi.item.id ||
+                (m.logicalId !== undefined && m.logicalId === oi.item.logicalId),
+            )?.price,
             reason: "菜單已更新",
           }));
         

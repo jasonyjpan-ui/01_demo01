@@ -54,6 +54,35 @@ describe("JsonFileStore versioned menu behavior", () => {
     expect(updated).not.toBeNull();
     expect(updated?.version).toBe(originalVersion + 1);
     expect(updated?.name).toBe("Updated Name");
+    expect(updated?.id).not.toBe(original.id);
+    expect(updated?.logicalId).toBe(original.logicalId);
+    expect(updated?.supersedes).toBe(original.id);
+
+    const currentMenu = store.getMenu();
+    expect(currentMenu.find((item) => item.id === original.id)).toBeUndefined();
+    expect(currentMenu.find((item) => item.id === updated?.id)).toBeDefined();
+  });
+
+  it("keeps full menu version history", async () => {
+    const store = await createStore();
+    const original = store.getMenu()[0];
+
+    const updated = await store.updateMenuItem(original.id, {
+      price: original.price + 10,
+      version: original.version,
+      changeReason: "Price adjustment",
+    });
+
+    expect(updated).not.toBeNull();
+
+    const history = await store.getMenuItemHistory!(updated!.id);
+    expect(history).toHaveLength(2);
+    expect(history[0].version).toBe(2);
+    expect(history[0].isCurrentVersion).toBe(true);
+    expect(history[0].previousPrice).toBe(original.price);
+    expect(history[0].changeReason).toBe("Price adjustment");
+    expect(history[1].version).toBe(1);
+    expect(history[1].isCurrentVersion).toBe(false);
   });
 
   it("rejects menu update when version mismatches", async () => {

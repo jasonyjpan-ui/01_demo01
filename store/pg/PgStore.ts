@@ -148,13 +148,60 @@ export class PgStore implements Store {
 
     const targetIndex = this.menu.findIndex((item) => item.id === menuId);
     if (targetIndex !== -1) {
-      this.menu[targetIndex] = nextItem;
+      this.menu.splice(targetIndex, 1, nextItem);
+    } else {
+      this.menu.push(nextItem);
     }
 
     return nextItem;
   }
 
   async getMenuItemHistory(menuId: number): Promise<Array<{
+    id?: number;
+    logicalId?: number;
+    entityId?: string;
+    version: number;
+    name: string;
+    price: number;
+    previousPrice?: number;
+    changeReason?: string;
+    isCurrentVersion?: boolean;
+    supersedes?: number;
+    createdAt?: string;
+    changedAt?: string;
+  }>> {
+    const [target] = await getDb()
+      .select()
+      .from(menuItemsTable)
+      .where(eq(menuItemsTable.id, menuId));
+
+    if (!target) {
+      return [];
+    }
+
+    const rows = await getDb()
+      .select()
+      .from(menuItemsTable)
+      .where(eq(menuItemsTable.logicalId, target.logicalId))
+      .orderBy(desc(menuItemsTable.version));
+
+    return rows.map((row) => ({
+      id: row.id,
+      logicalId: row.logicalId,
+      entityId: row.entityId,
+      version: row.version,
+      name: row.name,
+      price: row.price,
+      previousPrice: row.previousPrice || undefined,
+      changeReason: row.changeReason || undefined,
+      isCurrentVersion: row.isCurrentVersion,
+      supersedes: row.supersedes || undefined,
+      createdAt: row.createdAt?.toISOString(),
+      changedAt: row.changedAt?.toISOString(),
+    }));
+  }
+
+  async getMenuItemHistoryLegacy(menuId: number): Promise<Array<{
     version: number;
     name: string;
     price: number;
@@ -399,7 +446,12 @@ export class PgStore implements Store {
     }
 
     for (const orderItem of order.items) {
-      const menuItem = this.menu.find((item) => item.id === orderItem.item.id);
+      const menuItem = this.menu.find(
+        (item) =>
+          item.id === orderItem.item.id ||
+          (item.logicalId !== undefined &&
+            item.logicalId === orderItem.item.logicalId),
+      );
       if (!menuItem || menuItem.version !== orderItem.item.version) {
         return { ok: false, code: "MENU_VERSION_MISMATCH" };
       }
@@ -455,12 +507,20 @@ export class PgStore implements Store {
       await getDb().insert(menuItemsTable).values(
         normalized.menu.map((item) => ({
           id: item.id,
+          logicalId: item.logicalId ?? item.id,
+          entityId: item.entityId ?? `menu-${item.id}`,
           name: item.name,
           price: item.price,
           category: item.category,
           description: item.description,
           imageUrl: item.image_url,
           version: item.version,
+          isCurrentVersion: item.isCurrentVersion ?? true,
+          supersedes: item.supersedes,
+          changeReason: item.changeReason,
+          previousPrice: item.previousPrice,
+          createdAt: item.createdAt ? new Date(item.createdAt) : new Date(),
+          changedAt: item.changedAt ? new Date(item.changedAt) : null,
         })),
       );
     }
@@ -516,6 +576,7 @@ export class PgStore implements Store {
     const menuRows = await getDb()
       .select()
       .from(menuItemsTable)
+      .where(eq(menuItemsTable.isCurrentVersion, true))
       .orderBy(asc(menuItemsTable.id));
     const orderRows = await getDb()
       .select()
@@ -533,6 +594,9 @@ export class PgStore implements Store {
         imageUrl: orderItemsTable.imageUrl,
         qty: orderItemsTable.qty,
         version: orderItemsTable.version,
+        logicalId: menuItemsTable.logicalId,
+        entityId: menuItemsTable.entityId,
+        isCurrentVersion: menuItemsTable.isCurrentVersion,
         currentMenuVersion: menuItemsTable.version,
       })
       .from(orderItemsTable)
@@ -548,12 +612,20 @@ export class PgStore implements Store {
 
     this.menu = menuRows.map((row) => ({
       id: row.id,
+      logicalId: row.logicalId,
+      entityId: row.entityId,
       name: row.name,
       price: row.price,
       category: row.category,
       description: row.description,
       image_url: row.imageUrl,
       version: row.version,
+      isCurrentVersion: row.isCurrentVersion,
+      supersedes: row.supersedes || undefined,
+      changeReason: row.changeReason || undefined,
+      previousPrice: row.previousPrice || undefined,
+      createdAt: row.createdAt?.toISOString(),
+      changedAt: row.changedAt?.toISOString(),
     }));
 
     const itemsByOrderId = new Map<number, OrderItem[]>();
@@ -562,12 +634,15 @@ export class PgStore implements Store {
       orderItems.push({
         item: {
           id: row.itemId,
+          logicalId: row.logicalId ?? row.itemId,
+          entityId: row.entityId ?? `menu-${row.itemId}`,
           name: row.name,
           price: row.price,
           category: row.category,
           description: row.description,
           image_url: row.imageUrl,
           version: row.version,
+          isCurrentVersion: row.isCurrentVersion ?? row.version === row.currentMenuVersion,
         },
         qty: row.qty,
       });

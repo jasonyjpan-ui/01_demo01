@@ -1,23 +1,33 @@
 export interface MenuItem {
   id: number;
+  logicalId?: number;
+  entityId?: string;
   name: string;
   price: number;
   category: string;
   description: string;
   image_url: string;
   version: number;
+  isCurrentVersion?: boolean;
+  supersedes?: number;
   changeReason?: string;
   previousPrice?: number;
+  createdAt?: string;
   changedAt?: string;
 }
 
 export interface MenuItemHistory {
   id: number;
+  logicalId?: number;
+  entityId?: string;
   version: number;
   name: string;
   price: number;
   previousPrice?: number;
   changeReason?: string;
+  isCurrentVersion?: boolean;
+  supersedes?: number;
+  createdAt?: string;
   changedAt?: string;
 }
 
