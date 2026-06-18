@@ -165,6 +165,13 @@ export default function App() {
   const [editName, setEditName] = useState("");
   const [editPrice, setEditPrice] = useState("");
   const [editReason, setEditReason] = useState("");
+  const [isCreatingMenuItem, setIsCreatingMenuItem] = useState(false);
+  const [createName, setCreateName] = useState("");
+  const [createPrice, setCreatePrice] = useState("");
+  const [createCategory, setCreateCategory] = useState("");
+  const [createDescription, setCreateDescription] = useState("");
+  const [createImageUrl, setCreateImageUrl] = useState("");
+  const [isSubmittingMenuCreate, setIsSubmittingMenuCreate] = useState(false);
   const [menuActionId, setMenuActionId] = useState<number | null>(null);
   const [menuHistoryItem, setMenuHistoryItem] = useState<MenuItem | null>(null);
   const [menuHistory, setMenuHistory] = useState<MenuItem[]>([]);
@@ -914,6 +921,67 @@ export default function App() {
     setEditReason("");
   }
 
+  function resetCreateMenuForm(): void {
+    setCreateName("");
+    setCreatePrice("");
+    setCreateCategory("");
+    setCreateDescription("");
+    setCreateImageUrl("");
+  }
+
+  async function submitMenuCreate(): Promise<void> {
+    const nextPrice = Number(createPrice);
+    const trimmedName = createName.trim();
+    const trimmedCategory = createCategory.trim();
+    const trimmedDescription = createDescription.trim();
+    const trimmedImageUrl = createImageUrl.trim();
+
+    if (!trimmedName || !trimmedCategory || !trimmedDescription || !trimmedImageUrl) {
+      setActionError("請完整填寫菜名、分類、描述與圖片網址。");
+      return;
+    }
+
+    if (!Number.isInteger(nextPrice) || nextPrice < 0) {
+      setActionError("請輸入 0 以上的整數價格。");
+      return;
+    }
+
+    setActionError("");
+    setIsSubmittingMenuCreate(true);
+
+    try {
+      const response = await apiFetch("/api/menu", {
+        method: "POST",
+        headers: { "Content-Type": "application/json", ...authHeaders() },
+        body: JSON.stringify({
+          name: trimmedName,
+          price: nextPrice,
+          category: trimmedCategory,
+          description: trimmedDescription,
+          image_url: trimmedImageUrl,
+        }),
+      });
+
+      const payload = await response.json();
+      if (!response.ok) {
+        throw new Error(payload?.error || `HTTP ${response.status}`);
+      }
+
+      await loadMenu();
+      resetCreateMenuForm();
+      setIsCreatingMenuItem(false);
+    } catch (createError) {
+      console.error(createError);
+      setActionError(
+        createError instanceof Error
+          ? `新增菜單失敗：${createError.message}`
+          : "新增菜單失敗。",
+      );
+    } finally {
+      setIsSubmittingMenuCreate(false);
+    }
+  }
+
   async function submitMenuEdit(): Promise<void> {
     if (!editingMenuItem) {
       return;
@@ -1181,6 +1249,30 @@ export default function App() {
           <div className="alert alert-warning mb-4">
             <span>{actionError}</span>
           </div>
+        ) : null}
+
+        {isMerchant ? (
+          <section className="mb-6 rounded border border-base-300 bg-base-100 p-4 shadow-sm">
+            <div className="flex flex-wrap items-center justify-between gap-3">
+              <div>
+                <h2 className="text-xl font-bold">菜單管理</h2>
+                <p className="text-sm opacity-70">
+                  新增品項會立即出現在目前菜單，初始版本為 v1。
+                </p>
+              </div>
+              <button
+                type="button"
+                className="btn btn-primary"
+                onClick={() => {
+                  resetCreateMenuForm();
+                  setIsCreatingMenuItem(true);
+                  setActionError("");
+                }}
+              >
+                新增菜單
+              </button>
+            </div>
+          </section>
         ) : null}
 
         {items.length === 0 ? (
@@ -1606,6 +1698,98 @@ export default function App() {
             </div>
           </aside>
         </>
+      ) : null}
+
+      {isCreatingMenuItem ? (
+        <div className="fixed inset-0 z-40 flex items-center justify-center p-4">
+          <button
+            type="button"
+            className="absolute inset-0 bg-black/40"
+            aria-label="關閉新增菜單視窗"
+            onClick={() => setIsCreatingMenuItem(false)}
+          />
+          <section className="relative z-10 w-full max-w-2xl rounded-lg bg-base-100 shadow-2xl">
+            <div className="border-b border-base-300 px-5 py-4">
+              <h2 className="text-lg font-bold">新增菜單品項</h2>
+              <p className="text-sm opacity-70">
+                建立後會加入目前菜單，顧客可以直接點選。
+              </p>
+            </div>
+            <div className="grid gap-3 px-5 py-4 md:grid-cols-2">
+              <label className="form-control">
+                <span className="label-text mb-1">菜名</span>
+                <input
+                  className="input input-bordered"
+                  value={createName}
+                  onChange={(event) => setCreateName(event.target.value)}
+                  placeholder="例如：花生厚片"
+                />
+              </label>
+              <label className="form-control">
+                <span className="label-text mb-1">價格</span>
+                <input
+                  className="input input-bordered"
+                  type="number"
+                  min="0"
+                  step="1"
+                  value={createPrice}
+                  onChange={(event) => setCreatePrice(event.target.value)}
+                  placeholder="例如：45"
+                />
+              </label>
+              <label className="form-control">
+                <span className="label-text mb-1">分類</span>
+                <input
+                  className="input input-bordered"
+                  list="menu-category-suggestions"
+                  value={createCategory}
+                  onChange={(event) => setCreateCategory(event.target.value)}
+                  placeholder="例如：吐司"
+                />
+              </label>
+              <label className="form-control">
+                <span className="label-text mb-1">圖片網址</span>
+                <input
+                  className="input input-bordered"
+                  value={createImageUrl}
+                  onChange={(event) => setCreateImageUrl(event.target.value)}
+                  placeholder="/imgs/menu/example.webp"
+                />
+              </label>
+              <label className="form-control md:col-span-2">
+                <span className="label-text mb-1">描述</span>
+                <textarea
+                  className="textarea textarea-bordered min-h-24"
+                  value={createDescription}
+                  onChange={(event) => setCreateDescription(event.target.value)}
+                  placeholder="簡短描述口味、份量或主要食材"
+                />
+              </label>
+              <datalist id="menu-category-suggestions">
+                {grouped.categories.map((category) => (
+                  <option key={category} value={category} />
+                ))}
+              </datalist>
+            </div>
+            <div className="flex flex-wrap justify-end gap-2 border-t border-base-300 px-5 py-4">
+              <button
+                className="btn"
+                onClick={() => setIsCreatingMenuItem(false)}
+              >
+                取消
+              </button>
+              <button
+                className="btn btn-primary"
+                disabled={isSubmittingMenuCreate}
+                onClick={() => {
+                  void submitMenuCreate();
+                }}
+              >
+                {isSubmittingMenuCreate ? "新增中..." : "建立品項"}
+              </button>
+            </div>
+          </section>
+        </div>
       ) : null}
 
       {editingMenuItem ? (
