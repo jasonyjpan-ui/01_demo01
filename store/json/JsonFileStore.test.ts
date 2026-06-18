@@ -197,4 +197,45 @@ describe("JsonFileStore versioned menu behavior", () => {
       archivedAfterRestore.some((item) => item.logicalId === original.logicalId),
     ).toBe(false);
   });
+
+  it("moves submitted orders through merchant workflow statuses", async () => {
+    const store = await createStore();
+    const userId = "0001";
+    const order = await store.createOrder({ userId });
+    const menuItem = store.getMenu()[0];
+
+    const addResult = await store.updateOrderItem(order.id, {
+      userId,
+      itemId: menuItem.id,
+      qty: 2,
+    });
+    expect(addResult.ok).toBe(true);
+
+    const submitResult = await store.submitOrder(order.id, { userId });
+    expect(submitResult.ok).toBe(true);
+
+    const preparingResult = await store.updateOrderStatus!(order.id, {
+      status: "preparing",
+    });
+    expect(preparingResult.ok).toBe(true);
+    if (preparingResult.ok) {
+      expect(preparingResult.order.status).toBe("preparing");
+    }
+
+    const readyResult = await store.updateOrderStatus!(order.id, {
+      status: "ready",
+    });
+    expect(readyResult.ok).toBe(true);
+
+    const completedResult = await store.updateOrderStatus!(order.id, {
+      status: "completed",
+    });
+    expect(completedResult.ok).toBe(true);
+
+    const reopenResult = await store.updateOrderStatus!(order.id, {
+      status: "preparing",
+    });
+    expect(reopenResult.ok).toBe(false);
+    expect(reopenResult.code).toBe("INVALID_STATUS_TRANSITION");
+  });
 });

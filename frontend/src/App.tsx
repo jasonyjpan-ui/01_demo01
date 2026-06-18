@@ -4,6 +4,7 @@ import type {
   ApiDataResponse,
   MenuItem,
   Order,
+  OrderStatus,
   User,
 } from "../../shared/contracts.ts";
 import { CartValidation } from "./CartValidation";
@@ -13,9 +14,43 @@ const apiBaseUrl = (import.meta.env.VITE_API_BASE_URL || "").replace(/\/$/, "");
 const USER_STORAGE_KEY = "breakfast.user";
 
 type SafeUser = Omit<User, "password">;
+type ManagedOrderStatus = Exclude<OrderStatus, "pending">;
+
+const merchantOrderStatuses: ManagedOrderStatus[] = [
+  "submitted",
+  "preparing",
+  "ready",
+  "completed",
+  "cancelled",
+];
+
+const orderStatusLabels: Record<OrderStatus, string> = {
+  pending: "購物車",
+  submitted: "待接單",
+  preparing: "製作中",
+  ready: "可取餐",
+  completed: "已完成",
+  cancelled: "已取消",
+};
+
+function orderStatusBadgeClass(status: OrderStatus) {
+  if (status === "submitted") return "badge badge-warning";
+  if (status === "preparing") return "badge badge-info";
+  if (status === "ready") return "badge badge-primary";
+  if (status === "completed") return "badge badge-success";
+  if (status === "cancelled") return "badge badge-error";
+  return "badge badge-ghost";
+}
 
 function buildApiUrl(path: string) {
   return `${apiBaseUrl}${path}`;
+}
+
+function apiFetch(path: string, init: RequestInit = {}) {
+  return fetch(buildApiUrl(path), {
+    ...init,
+    credentials: "include",
+  });
 }
 
 function normalizeUserId(rawId: unknown): string | null {
@@ -96,6 +131,13 @@ export default function App() {
   const [orderId, setOrderId] = useState<number | null>(null);
   const [historyOrders, setHistoryOrders] = useState<Order[]>([]);
   const [historyLoading, setHistoryLoading] = useState(false);
+  const [merchantOrders, setMerchantOrders] = useState<Order[]>([]);
+  const [merchantOrdersLoading, setMerchantOrdersLoading] = useState(false);
+  const [merchantOrderFilter, setMerchantOrderFilter] =
+    useState<ManagedOrderStatus | "all">("all");
+  const [merchantOrderActionId, setMerchantOrderActionId] = useState<
+    number | null
+  >(null);
   const [cartQtyByItemId, setCartQtyByItemId] = useState<Record<number, number>>(
     {},
   );
@@ -155,7 +197,7 @@ export default function App() {
   }
 
   async function loadMenu(): Promise<MenuItem[]> {
-    const response = await fetch(buildApiUrl("/api/menu"));
+    const response = await apiFetch("/api/menu");
     if (!response.ok) {
       throw new Error(`Load menu failed: HTTP ${response.status}`);
     }
@@ -172,7 +214,7 @@ export default function App() {
       return [];
     }
 
-    const response = await fetch(buildApiUrl("/api/menu/archived"), {
+    const response = await apiFetch("/api/menu/archived", {
       headers: { "x-user-id": activeUser.id },
     });
     if (!response.ok) {
@@ -186,8 +228,8 @@ export default function App() {
   }
 
   async function loadCurrentOrder(targetUserId: string): Promise<Order | null> {
-    const response = await fetch(
-      buildApiUrl(`/api/orders/current?userId=${targetUserId}`),
+    const response = await apiFetch(
+      `/api/orders/current?userId=${targetUserId}`,
     );
 
     if (!response.ok) {
@@ -211,8 +253,8 @@ export default function App() {
     setHistoryLoading(true);
 
     try {
-      const response = await fetch(
-        buildApiUrl(`/api/orders/history?userId=${targetUserId}`),
+      const response = await apiFetch(
+        `/api/orders/history?userId=${targetUserId}`,
       );
 
       if (!response.ok) {
@@ -226,11 +268,92 @@ export default function App() {
     }
   }
 
+  async function loadMerchantOrders(
+    status: ManagedOrderStatus | "all" = merchantOrderFilter,
+  ): Promise<void> {
+    if (!isMerchant) {
+      setMerchantOrders([]);
+      return;
+    }
+
+    setMerchantOrdersLoading(true);
+    try {
+      const query = status === "all" ? "" : `?status=${status}`;
+      const response = await apiFetch(`/api/orders${query}`, {
+        headers: authHeaders(),
+      });
+
+      if (!response.ok) {
+        throw new Error(`Load merchant orders failed: HTTP ${response.status}`);
+      }
+
+      const payload = (await response.json()) as ApiDataResponse<Order[]>;
+      setMerchantOrders(Array.isArray(payload?.data) ? payload.data : []);
+    } finally {
+      setMerchantOrdersLoading(false);
+    }
+  }
+
   async function refreshUserOrders(targetUserId: string): Promise<void> {
     await Promise.all([
       loadCurrentOrder(targetUserId),
       loadOrderHistory(targetUserId),
     ]);
+  }
+
+  function getNextMerchantOrderActions(status: OrderStatus) {
+    if (status === "submitted") {
+      return [
+        { status: "preparing" as ManagedOrderStatus, label: "開始製作" },
+        { status: "cancelled" as ManagedOrderStatus, label: "取消訂單" },
+      ];
+    }
+
+    if (status === "preparing") {
+      return [
+        { status: "ready" as ManagedOrderStatus, label: "餐點完成" },
+        { status: "cancelled" as ManagedOrderStatus, label: "取消訂單" },
+      ];
+    }
+
+    if (status === "ready") {
+      return [
+        { status: "completed" as ManagedOrderStatus, label: "交付完成" },
+      ];
+    }
+
+    return [];
+  }
+
+  async function updateMerchantOrderStatus(
+    orderId: number,
+    status: ManagedOrderStatus,
+  ): Promise<void> {
+    setActionError("");
+    setMerchantOrderActionId(orderId);
+
+    try {
+      const response = await apiFetch(`/api/orders/${orderId}/status`, {
+        method: "PATCH",
+        headers: { "Content-Type": "application/json", ...authHeaders() },
+        body: JSON.stringify({ status }),
+      });
+      const payload = await response.json();
+
+      if (!response.ok) {
+        throw new Error(payload?.error || `HTTP ${response.status}`);
+      }
+
+      await loadMerchantOrders();
+      if (user) {
+        await loadOrderHistory(user.id);
+      }
+    } catch (statusError) {
+      console.error(statusError);
+      setActionError("訂單狀態更新失敗，請稍後再試。");
+    } finally {
+      setMerchantOrderActionId(null);
+    }
   }
 
   useEffect(() => {
@@ -286,7 +409,7 @@ export default function App() {
     }
 
     const loadGoogleStatus = async () => {
-      const response = await fetch(buildApiUrl("/api/auth/google/status"));
+      const response = await apiFetch("/api/auth/google/status");
       if (!response.ok) {
         return;
       }
@@ -302,7 +425,22 @@ export default function App() {
       }
     };
 
-    Promise.all([loadMenu(), loadGoogleStatus()])
+    const loadSession = async () => {
+      const response = await apiFetch("/api/auth/session");
+      if (!response.ok) {
+        return;
+      }
+
+      const payload = (await response.json()) as ApiDataResponse<SafeUser | null>;
+      if (!mounted || !payload.data) {
+        return;
+      }
+
+      setUser(payload.data);
+      window.localStorage.setItem(USER_STORAGE_KEY, JSON.stringify(payload.data));
+    };
+
+    Promise.all([loadMenu(), loadGoogleStatus(), loadSession()])
       .catch((fetchError) => {
         if (mounted) {
           setError("菜單讀取失敗，請稍後再試。");
@@ -323,6 +461,7 @@ export default function App() {
   useEffect(() => {
     if (!user) {
       setHistoryOrders([]);
+      setMerchantOrders([]);
       resetCartState();
       return;
     }
@@ -337,8 +476,13 @@ export default function App() {
         setActionError("讀取已下架品項失敗，請稍後再試。");
         console.error(archivedError);
       });
+      void loadMerchantOrders().catch((ordersError) => {
+        setActionError("商家訂單讀取失敗，請稍後再試。");
+        console.error(ordersError);
+      });
     } else {
       setArchivedItems([]);
+      setMerchantOrders([]);
     }
   }, [user]);
 
@@ -403,7 +547,7 @@ export default function App() {
       return orderId;
     }
 
-    const response = await fetch(buildApiUrl("/api/orders"), {
+    const response = await apiFetch("/api/orders", {
       method: "POST",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({ userId: user.id }),
@@ -440,7 +584,7 @@ export default function App() {
     setIsLoggingIn(true);
 
     try {
-      const response = await fetch(buildApiUrl("/api/auth/login"), {
+      const response = await apiFetch("/api/auth/login", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
@@ -474,6 +618,9 @@ export default function App() {
   }
 
   function handleLogout() {
+    void apiFetch("/api/auth/logout", { method: "POST" }).catch((logoutError) => {
+      console.error(logoutError);
+    });
     window.localStorage.removeItem(USER_STORAGE_KEY);
     setUser(null);
     setAuthError("");
@@ -498,7 +645,7 @@ export default function App() {
       const currentQty = cartQtyByItemId[item.id] ?? 0;
       const nextQty = currentQty + 1;
 
-      const response = await fetch(buildApiUrl(`/api/orders/${targetOrderId}`), {
+      const response = await apiFetch(`/api/orders/${targetOrderId}`, {
         method: "PATCH",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
@@ -560,7 +707,7 @@ export default function App() {
 
     try {
       for (const detail of cartDetails) {
-        const response = await fetch(buildApiUrl(`/api/orders/${orderId}`), {
+        const response = await apiFetch(`/api/orders/${orderId}`, {
           method: "PATCH",
           headers: { "Content-Type": "application/json" },
           body: JSON.stringify({
@@ -594,8 +741,8 @@ export default function App() {
     setIsSubmittingOrder(true);
 
     try {
-      const response = await fetch(
-        buildApiUrl(`/api/orders/${orderId}/submit`),
+      const response = await apiFetch(
+        `/api/orders/${orderId}/submit`,
         {
           method: "POST",
           headers: { "Content-Type": "application/json" },
@@ -654,7 +801,7 @@ export default function App() {
 
     for (const itemId of staleItemIds) {
       try {
-        const response = await fetch(buildApiUrl(`/api/orders/${orderId}`), {
+        const response = await apiFetch(`/api/orders/${orderId}`, {
           method: "PATCH",
           headers: { "Content-Type": "application/json" },
           body: JSON.stringify({
@@ -700,7 +847,7 @@ export default function App() {
           continue;
         }
 
-        const removeResponse = await fetch(buildApiUrl(`/api/orders/${orderId}`), {
+        const removeResponse = await apiFetch(`/api/orders/${orderId}`, {
           method: "PATCH",
           headers: { "Content-Type": "application/json" },
           body: JSON.stringify({
@@ -714,7 +861,7 @@ export default function App() {
           throw new Error(`Remove stale item failed: HTTP ${removeResponse.status}`);
         }
 
-        const addResponse = await fetch(buildApiUrl(`/api/orders/${orderId}`), {
+        const addResponse = await apiFetch(`/api/orders/${orderId}`, {
           method: "PATCH",
           headers: { "Content-Type": "application/json" },
           body: JSON.stringify({
@@ -787,7 +934,7 @@ export default function App() {
     setMenuActionId(editingMenuItem.id);
 
     try {
-      const response = await fetch(buildApiUrl(`/api/menu/${editingMenuItem.id}`), {
+      const response = await apiFetch(`/api/menu/${editingMenuItem.id}`, {
         method: "PATCH",
         headers: { "Content-Type": "application/json", ...authHeaders() },
         body: JSON.stringify({
@@ -829,7 +976,7 @@ export default function App() {
     setMenuHistoryLoading(true);
 
     try {
-      const response = await fetch(buildApiUrl(`/api/menu/${item.id}/history`), {
+      const response = await apiFetch(`/api/menu/${item.id}/history`, {
         headers: authHeaders(),
       });
       const payload = (await response.json()) as ApiDataResponse<MenuItem[]>;
@@ -851,7 +998,7 @@ export default function App() {
     setActionError("");
 
     try {
-      const response = await fetch(buildApiUrl(`/api/menu/${item.id}`), {
+      const response = await apiFetch(`/api/menu/${item.id}`, {
         method: "DELETE",
         headers: authHeaders(),
       });
@@ -883,7 +1030,7 @@ export default function App() {
     setActionError("");
 
     try {
-      const response = await fetch(buildApiUrl(`/api/menu/${item.id}/restore`), {
+      const response = await apiFetch(`/api/menu/${item.id}/restore`, {
         method: "POST",
         headers: { "Content-Type": "application/json", ...authHeaders() },
         body: JSON.stringify({
@@ -1151,6 +1298,122 @@ export default function App() {
             </section>
           ))
         )}
+
+        {isMerchant ? (
+          <section className="mt-10">
+            <div className="mb-4 flex flex-wrap items-center justify-between gap-2">
+              <div>
+                <h2 className="text-2xl font-bold">商家訂單管理</h2>
+                <p className="text-sm opacity-70">
+                  接單、製作、通知取餐與完成交付
+                </p>
+              </div>
+              <div className="flex flex-wrap items-center gap-2">
+                <select
+                  className="select select-bordered select-sm"
+                  value={merchantOrderFilter}
+                  onChange={(event) => {
+                    const nextFilter = event.target.value as
+                      | ManagedOrderStatus
+                      | "all";
+                    setMerchantOrderFilter(nextFilter);
+                    void loadMerchantOrders(nextFilter);
+                  }}
+                >
+                  <option value="all">全部訂單</option>
+                  {merchantOrderStatuses.map((status) => (
+                    <option key={status} value={status}>
+                      {orderStatusLabels[status]}
+                    </option>
+                  ))}
+                </select>
+                <button
+                  type="button"
+                  className="btn btn-sm btn-outline"
+                  onClick={() => {
+                    void loadMerchantOrders();
+                  }}
+                >
+                  重新整理
+                </button>
+              </div>
+            </div>
+
+            {merchantOrdersLoading ? (
+              <div className="alert">
+                <span>商家訂單讀取中...</span>
+              </div>
+            ) : merchantOrders.length === 0 ? (
+              <div className="alert alert-info">
+                <span>目前沒有符合條件的訂單。</span>
+              </div>
+            ) : (
+              <div className="grid grid-cols-1 gap-3 lg:grid-cols-2">
+                {merchantOrders.map((order) => (
+                  <article
+                    key={order.id}
+                    className="rounded border border-base-300 bg-base-100 p-4 shadow-sm"
+                  >
+                    <div className="flex flex-wrap items-start justify-between gap-2">
+                      <div>
+                        <h3 className="font-semibold">訂單 #{order.id}</h3>
+                        <p className="text-sm opacity-70">
+                          顧客 #{order.userId} ·{" "}
+                          {formatDateTime(order.submittedAt ?? order.createdAt)}
+                        </p>
+                      </div>
+                      <span className={orderStatusBadgeClass(order.status)}>
+                        {orderStatusLabels[order.status]}
+                      </span>
+                    </div>
+
+                    <ul className="mt-3 space-y-1 text-sm">
+                      {order.items.map((detail) => (
+                        <li
+                          key={`${order.id}-${detail.item.id}`}
+                          className="flex justify-between gap-3"
+                        >
+                          <span>
+                            {detail.item.name} x {detail.qty}
+                          </span>
+                          <span>${detail.item.price * detail.qty}</span>
+                        </li>
+                      ))}
+                    </ul>
+
+                    <div className="mt-3 flex flex-wrap items-center justify-between gap-2 border-t border-base-300 pt-3">
+                      <span className="font-bold">總額 ${order.total}</span>
+                      <div className="flex flex-wrap gap-2">
+                        {getNextMerchantOrderActions(order.status).map(
+                          (action) => (
+                            <button
+                              key={action.status}
+                              type="button"
+                              className={
+                                action.status === "cancelled"
+                                  ? "btn btn-xs btn-error btn-outline"
+                                  : "btn btn-xs btn-primary"
+                              }
+                              disabled={merchantOrderActionId === order.id}
+                              onClick={() => {
+                                void updateMerchantOrderStatus(
+                                  order.id,
+                                  action.status,
+                                );
+                              }}
+                            >
+                              {action.label}
+                            </button>
+                          ),
+                        )}
+                      </div>
+                    </div>
+                  </article>
+                ))}
+              </div>
+            )}
+          </section>
+        ) : null}
 
         {isMerchant ? (
           <section className="mt-10">

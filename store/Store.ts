@@ -1,4 +1,4 @@
-import type { MenuItem, Order } from "../shared/contracts.ts";
+import type { MenuItem, Order, OrderStatus } from "../shared/contracts.ts";
 
 export type UpdateOrderItemErrorCode =
   | "ORDER_NOT_FOUND"
@@ -12,6 +12,10 @@ export type SubmitOrderErrorCode =
   | "ORDER_NOT_EDITABLE"
   | "EMPTY_ORDER"
   | "MENU_VERSION_MISMATCH";
+
+export type UpdateOrderStatusErrorCode =
+  | "ORDER_NOT_FOUND"
+  | "INVALID_STATUS_TRANSITION";
 
 export interface Store {
   init(): Promise<void>;
@@ -77,5 +81,12 @@ export interface Store {
     input: { userId: string },
   ): Promise<
     { ok: true; order: Order } | { ok: false; code: SubmitOrderErrorCode }
+  >;
+  updateOrderStatus?(
+    orderId: number,
+    input: { status: OrderStatus },
+  ): Promise<
+    | { ok: true; order: Order }
+    | { ok: false; code: UpdateOrderStatusErrorCode }
   >;
 }

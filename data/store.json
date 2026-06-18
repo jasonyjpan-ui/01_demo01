@@ -4,20 +4,22 @@
       "id": "0001",
       "email": "demo@example.com",
       "name": "示範使用者",
-      "password": "1234"
+      "password": "1234",
+      "role": "customer"
     },
     {
       "id": "0002",
       "email": "amy@example.com",
       "name": "Amy",
-      "password": "1234"
+      "password": "1234",
+      "role": "merchant"
     },
     {
       "id": "0003",
       "email": "jason.yj.pan@gmail.com",
       "name": "an p",
       "password": "",
-      "googleSub": "116067495439343297338"
+      "role": "customer"
     }
   ],
   "menu": [
@@ -445,7 +447,7 @@
         }
       ],
       "total": 50,
-      "status": "submitted",
+      "status": "ready",
       "createdAt": "2026-04-03T22:43:05.970Z",
       "userId": "0001",
       "submittedAt": "2026-06-16T11:56:39.662Z"
@@ -486,7 +488,7 @@
         }
       ],
       "total": 75,
-      "status": "submitted",
+      "status": "cancelled",
       "createdAt": "2026-06-16T13:00:46.470Z",
       "submittedAt": "2026-06-17T15:03:13.754Z"
     },
@@ -513,9 +515,39 @@
       "total": 30,
       "status": "pending",
       "createdAt": "2026-06-17T20:17:26.080Z"
+    },
+    {
+      "id": 8,
+      "userId": "0003",
+      "items": [
+        {
+          "item": {
+            "id": 13,
+            "logicalId": 6,
+            "entityId": "menu-6",
+            "name": "蘿蔔糕加蛋",
+            "price": 55,
+            "category": "餐點",
+            "description": "外表煎到金黃微酥的蘿蔔糕，搭配荷包蛋與特調醬油膏。",
+            "image_url": "/imgs/menu/turnip-cake-with-egg.webp",
+            "version": 2,
+            "isCurrentVersion": true,
+            "supersedes": 6,
+            "changeReason": "原物料上漲",
+            "previousPrice": 50,
+            "createdAt": "2026-06-17T20:17:17.363Z",
+            "changedAt": "2026-06-17T20:17:17.363Z"
+          },
+          "qty": 1
+        }
+      ],
+      "total": 55,
+      "status": "completed",
+      "createdAt": "2026-06-18T05:26:15.007Z",
+      "submittedAt": "2026-06-18T05:26:19.514Z"
     }
   ],
   "userIdCounter": 3,
   "menuIdCounter": 15,
-  "orderIdCounter": 7
+  "orderIdCounter": 8
 }

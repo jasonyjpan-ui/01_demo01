@@ -3,7 +3,7 @@ import { openapi } from "@elysiajs/openapi";
 import { staticPlugin } from "@elysiajs/static";
 import { existsSync, readFileSync } from "node:fs";
 import toTaipeiDateTime from "./util.ts";
-import type { Order, OrderResponse } from "./shared/contracts.ts";
+import type { Order, OrderResponse, OrderStatus } from "./shared/contracts.ts";
 import { createStore } from "./store/index.ts";
 import { createAuth } from "./auth/index.ts";
 
@@ -60,16 +60,29 @@ function getEnv(key: string): string | undefined {
 
 const googleClientId = getEnv("GOOGLE_CLIENT_ID");
 const googleClientSecret = getEnv("GOOGLE_CLIENT_SECRET");
+const publicBaseUrl = (
+  getEnv("PUBLIC_BASE_URL") ??
+  getEnv("RENDER_EXTERNAL_URL") ??
+  getEnv("BETTER_AUTH_URL") ??
+  ""
+).replace(/\/$/, "");
 const googleRedirectUri =
   getEnv("GOOGLE_REDIRECT_URI") ??
+  (publicBaseUrl
+    ? `${publicBaseUrl}/api/auth/google/callback`
+    : undefined) ??
   `http://${host}:${port}/api/auth/google/callback`;
 const googleLoginRedirectUrl =
   getEnv("GOOGLE_LOGIN_REDIRECT_URL") ??
   getEnv("FRONTEND_URL") ??
+  (publicBaseUrl || undefined) ??
   `http://${host}:5173`;
 
 const googleOAuthStates = new Map<string, number>();
 const googleOAuthStateTtlMs = 10 * 60 * 1000;
+const sessionCookieName = "bf_session";
+const sessionTtlMs = 7 * 24 * 60 * 60 * 1000;
+const sessions = new Map<string, { userId: string; expiresAt: number }>();
 
 const apiErrorResponseSchema = t.Object({
   error: t.String(),
@@ -124,12 +137,21 @@ const orderItemSchema = t.Object({
   qty: t.Number({ minimum: 0 }),
 });
 
+const orderStatusSchema = t.Union([
+  t.Literal("pending"),
+  t.Literal("submitted"),
+  t.Literal("preparing"),
+  t.Literal("ready"),
+  t.Literal("completed"),
+  t.Literal("cancelled"),
+]);
+
 const orderResponseSchema = t.Object({
   id: t.Number({ minimum: 1 }),
   userId: t.String({ minLength: 1 }),
   items: t.Array(orderItemSchema),
   total: t.Number({ minimum: 0 }),
-  status: t.Union([t.Literal("pending"), t.Literal("submitted")]),
+  status: orderStatusSchema,
   createdAt: t.String({ minLength: 1 }),
   submittedAt: t.Optional(t.String({ minLength: 1 })),
   createdAtTaipei: t.String({ minLength: 1 }),
@@ -137,6 +159,10 @@ const orderResponseSchema = t.Object({
 
 const loginResponseSchema = t.Object({
   data: safeUserSchema,
+});
+
+const sessionResponseSchema = t.Object({
+  data: t.Union([safeUserSchema, t.Null()]),
 });
 
 const menuListResponseSchema = t.Object({
@@ -165,11 +191,106 @@ const healthResponseSchema = t.Object({
 
 const app = new Elysia();
 
-function redirect(location: string, status = 302) {
+function redirect(
+  location: string,
+  status = 302,
+  headers: Record<string, string> = {},
+) {
   return new Response(null, {
     status,
-    headers: { Location: location },
+    headers: { Location: location, ...headers },
   });
+}
+
+function isSecureSessionCookie() {
+  return publicBaseUrl.startsWith("https://") || getEnv("NODE_ENV") === "production";
+}
+
+function serializeSessionCookie(sessionId: string, maxAgeSeconds: number) {
+  const parts = [
+    `${sessionCookieName}=${sessionId}`,
+    "HttpOnly",
+    "Path=/",
+    "SameSite=Lax",
+    `Max-Age=${maxAgeSeconds}`,
+  ];
+
+  if (isSecureSessionCookie()) {
+    parts.push("Secure");
+  }
+
+  return parts.join("; ");
+}
+
+function parseCookies(cookieHeader: string | null) {
+  const cookies = new Map<string, string>();
+  if (!cookieHeader) {
+    return cookies;
+  }
+
+  for (const part of cookieHeader.split(";")) {
+    const [rawKey, ...rawValueParts] = part.trim().split("=");
+    if (!rawKey) {
+      continue;
+    }
+
+    cookies.set(rawKey, rawValueParts.join("="));
+  }
+
+  return cookies;
+}
+
+function cleanupSessions() {
+  const now = Date.now();
+  for (const [sessionId, session] of sessions) {
+    if (session.expiresAt <= now) {
+      sessions.delete(sessionId);
+    }
+  }
+}
+
+function createSession(userId: string) {
+  cleanupSessions();
+  const sessionId = crypto.randomUUID();
+  sessions.set(sessionId, {
+    userId,
+    expiresAt: Date.now() + sessionTtlMs,
+  });
+
+  return {
+    sessionId,
+    cookie: serializeSessionCookie(sessionId, Math.floor(sessionTtlMs / 1000)),
+  };
+}
+
+function clearSessionCookie() {
+  return serializeSessionCookie("", 0);
+}
+
+function getSessionId(request: Request) {
+  return parseCookies(request.headers.get("cookie")).get(sessionCookieName);
+}
+
+function getSessionUser(request: Request) {
+  const sessionId = getSessionId(request);
+  if (!sessionId) {
+    return undefined;
+  }
+
+  const session = sessions.get(sessionId);
+  if (!session || session.expiresAt <= Date.now()) {
+    sessions.delete(sessionId);
+    return undefined;
+  }
+
+  const user = auth.getUserById(session.userId);
+  if (!user) {
+    sessions.delete(sessionId);
+    return undefined;
+  }
+
+  session.expiresAt = Date.now() + sessionTtlMs;
+  return user;
 }
 
 function cleanupGoogleOAuthStates() {
@@ -202,12 +323,21 @@ function buildGoogleLoginResultUrl(
 }
 
 function getRequestUser(request: Request) {
+  const sessionUser = getSessionUser(request);
+  if (sessionUser) {
+    return sessionUser;
+  }
+
   const userId = request.headers.get("x-user-id");
   if (!userId) {
     return undefined;
   }
 
   return auth.getUserById(userId);
+}
+
+function resolveOrderUser(request: Request, fallbackUserId: string) {
+  return getSessionUser(request) ?? auth.getUserById(fallbackUserId);
 }
 
 function isMerchantRequest(request: Request) {
@@ -219,6 +349,16 @@ function merchantRequired() {
     error: "Forbidden",
     message: "Only merchant users can manage menu items.",
   };
+}
+
+function isManagedOrderStatus(status: string): status is OrderStatus {
+  return (
+    status === "submitted" ||
+    status === "preparing" ||
+    status === "ready" ||
+    status === "completed" ||
+    status === "cancelled"
+  );
 }
 
 if (hasPublicAssets) {
@@ -287,8 +427,10 @@ app.onAfterHandle(({ request, set }) => {
   }
 
   set.headers.vary = "Origin";
+  set.headers["access-control-allow-credentials"] = "true";
   set.headers["access-control-allow-methods"] = "GET,POST,PATCH,DELETE,OPTIONS";
-  set.headers["access-control-allow-headers"] = "Content-Type, Authorization";
+  set.headers["access-control-allow-headers"] =
+    "Content-Type, Authorization, x-user-id";
 });
 
 // API 路由
@@ -307,6 +449,9 @@ app.post(
       return { error: "Invalid credentials" };
     }
 
+    const session = createSession(result.user.id);
+    set.headers["set-cookie"] = session.cookie;
+
     return { data: result.user };
   },
   {
@@ -323,6 +468,45 @@ app.post(
     response: {
       200: loginResponseSchema,
       401: apiErrorResponseSchema,
+    },
+  },
+);
+
+app.get(
+  "/api/auth/session",
+  ({ request }) => ({ data: getSessionUser(request) ?? null }),
+  {
+    detail: {
+      tags: ["auth"],
+      summary: "Get current authenticated session",
+      description:
+        "Return the logged-in user from the HttpOnly session cookie, or null.",
+    },
+    response: {
+      200: sessionResponseSchema,
+    },
+  },
+);
+
+app.post(
+  "/api/auth/logout",
+  ({ request, set }) => {
+    const sessionId = getSessionId(request);
+    if (sessionId) {
+      sessions.delete(sessionId);
+    }
+
+    set.headers["set-cookie"] = clearSessionCookie();
+    return { data: true };
+  },
+  {
+    detail: {
+      tags: ["auth"],
+      summary: "Logout current session",
+      description: "Delete the current server session and clear the cookie.",
+    },
+    response: {
+      200: t.Object({ data: t.Boolean() }),
     },
   },
 );
@@ -481,7 +665,10 @@ app.get(
         googleSub: profile.sub,
       });
 
-      return redirect(buildGoogleLoginResultUrl({ ok: true, user }));
+      const session = createSession(user.id);
+      return redirect(buildGoogleLoginResultUrl({ ok: true, user }), 302, {
+        "Set-Cookie": session.cookie,
+      });
     } catch (error) {
       console.error(error);
       return redirect(
@@ -796,17 +983,34 @@ app.post(
 // 訂單列表路由
 app.get(
   "/api/orders",
-  () => ({
-    data: store.getOrders().map(toOrderResponse),
-  }),
+  ({ query, request, set }) => {
+    if (!isMerchantRequest(request)) {
+      set.status = 403;
+      return merchantRequired();
+    }
+
+    const status = query.status;
+    const orders = store
+      .getOrders()
+      .filter((order) => order.status !== "pending")
+      .filter((order) => !status || order.status === status)
+      .sort((a, b) => b.createdAt.localeCompare(a.createdAt));
+
+    return { data: orders.map(toOrderResponse) };
+  },
   {
+    query: t.Object({
+      status: t.Optional(orderStatusSchema),
+    }),
     detail: {
       tags: ["orders"],
-      summary: "List all orders",
-      description: "Return all orders stored in the demo backend.",
+      summary: "List submitted orders for merchant",
+      description:
+        "Return submitted and managed orders. Merchant role is required.",
     },
     response: {
       200: orderListResponseSchema,
+      403: apiErrorResponseSchema,
     },
   },
 );
@@ -814,15 +1018,15 @@ app.get(
 // 取得使用者目前進行中的訂單
 app.get(
   "/api/orders/current",
-  ({ query, set }) => {
-    const user = auth.getUserById(query.userId);
+  ({ query, request, set }) => {
+    const user = resolveOrderUser(request, query.userId);
 
     if (!user) {
       set.status = 404;
       return { error: "User not found" };
     }
 
-    const currentOrder = store.getCurrentOrderByUserId(query.userId);
+    const currentOrder = store.getCurrentOrderByUserId(user.id);
     return { data: currentOrder ? toOrderResponse(currentOrder) : null };
   },
   {
@@ -845,8 +1049,8 @@ app.get(
 // 取得使用者歷史訂單
 app.get(
   "/api/orders/history",
-  ({ query, set }) => {
-    const user = auth.getUserById(query.userId);
+  ({ query, request, set }) => {
+    const user = resolveOrderUser(request, query.userId);
 
     if (!user) {
       set.status = 404;
@@ -854,7 +1058,7 @@ app.get(
     }
 
     return {
-      data: store.getOrderHistoryByUserId(query.userId).map(toOrderResponse),
+      data: store.getOrderHistoryByUserId(user.id).map(toOrderResponse),
     };
   },
   {
@@ -876,21 +1080,21 @@ app.get(
 // 創建新訂單
 app.post(
   "/api/orders",
-  async ({ body, set }) => {
+  async ({ body, request, set }) => {
     console.log("[DEBUG] /api/orders body", body, typeof body.userId);
-    const user = auth.getUserById(body.userId);
+    const user = resolveOrderUser(request, body.userId);
     if (!user) {
       set.status = 404;
       return { error: "User not found" };
     }
 
-    const existingOrder = store.getCurrentOrderByUserId(body.userId);
+    const existingOrder = store.getCurrentOrderByUserId(user.id);
     if (existingOrder) {
       console.log("[DEBUG] existingOrder", existingOrder);
       return { data: toOrderResponse(existingOrder) };
     }
 
-    const newOrder = await store.createOrder({ userId: body.userId });
+    const newOrder = await store.createOrder({ userId: user.id });
     console.log("[DEBUG] newOrder", newOrder);
     set.status = 201;
     return { data: toOrderResponse(newOrder) };
@@ -916,16 +1120,17 @@ app.post(
 // 獲取單筆訂單
 app.get(
   "/api/orders/:id",
-  ({ params, query, set }) => {
+  ({ params, query, request, set }) => {
     const orderId = parseInt(params.id, 10);
     const order = store.getOrderById(orderId);
+    const user = resolveOrderUser(request, query.userId);
 
     if (!order) {
       set.status = 404;
       return { error: "Order not found" };
     }
 
-    if (order.userId !== query.userId) {
+    if (!user || order.userId !== user.id) {
       set.status = 403;
       return { error: "Forbidden" };
     }
@@ -956,10 +1161,16 @@ app.get(
 // 更新訂單項目
 app.patch(
   "/api/orders/:id",
-  async ({ params, body, set }) => {
+  async ({ params, body, request, set }) => {
     const orderId = parseInt(params.id);
+    const user = resolveOrderUser(request, body.userId);
+    if (!user) {
+      set.status = 404;
+      return { error: "User not found" };
+    }
+
     const result = await store.updateOrderItem(orderId, {
-      userId: body.userId,
+      userId: user.id,
       itemId: body.itemId,
       qty: body.qty,
     });
@@ -1015,12 +1226,83 @@ app.patch(
   },
 );
 
+app.patch(
+  "/api/orders/:id/status",
+  async ({ params, body, request, set }) => {
+    if (!isMerchantRequest(request)) {
+      set.status = 403;
+      return merchantRequired();
+    }
+
+    if (!store.updateOrderStatus) {
+      set.status = 501;
+      return { error: "Order status management is not supported" };
+    }
+
+    const orderId = parseInt(params.id, 10);
+    if (!isManagedOrderStatus(body.status)) {
+      set.status = 400;
+      return { error: "Invalid managed order status" };
+    }
+
+    const result = await store.updateOrderStatus(orderId, {
+      status: body.status,
+    });
+
+    if (!result.ok && result.code === "ORDER_NOT_FOUND") {
+      set.status = 404;
+      return { error: "Order not found" };
+    }
+
+    if (!result.ok && result.code === "INVALID_STATUS_TRANSITION") {
+      set.status = 409;
+      return { error: "Invalid order status transition" };
+    }
+
+    if (!result.ok) {
+      set.status = 500;
+      return { error: "Unexpected store state" };
+    }
+
+    return { data: toOrderResponse(result.order) };
+  },
+  {
+    params: t.Object({
+      id: t.String({ pattern: "^[0-9]+$" }),
+    }),
+    body: t.Object({
+      status: orderStatusSchema,
+    }),
+    detail: {
+      tags: ["orders"],
+      summary: "Update merchant order status",
+      description:
+        "Move a submitted order through merchant workflow states.",
+    },
+    response: {
+      200: orderResponseEnvelopeSchema,
+      400: apiErrorResponseSchema,
+      403: apiErrorResponseSchema,
+      404: apiErrorResponseSchema,
+      409: apiErrorResponseSchema,
+      501: apiErrorResponseSchema,
+      500: apiErrorResponseSchema,
+    },
+  },
+);
+
 // 送出訂單
 app.post(
   "/api/orders/:id/submit",
-  async ({ params, body, set }) => {
+  async ({ params, body, request, set }) => {
     const orderId = parseInt(params.id, 10);
-    const result = await store.submitOrder(orderId, { userId: body.userId });
+    const user = resolveOrderUser(request, body.userId);
+    if (!user) {
+      set.status = 404;
+      return { error: "User not found" };
+    }
+
+    const result = await store.submitOrder(orderId, { userId: user.id });
 
     if (!result.ok && result.code === "ORDER_NOT_FOUND") {
       set.status = 404;
@@ -1040,7 +1322,7 @@ app.post(
     if (!result.ok && result.code === "MENU_VERSION_MISMATCH") {
       set.status = 409;
       // 返回詳細的版本不匹配信息
-      const order = store.getCurrentOrderByUserId(body.userId);
+      const order = store.getCurrentOrderByUserId(user.id);
       if (order) {
         const currentMenuItems = store.getMenu();
         const staleItems = order.items

@@ -3,6 +3,7 @@ import type {
   MenuItem,
   Order,
   OrderItem,
+  OrderStatus,
   User,
 } from "../../shared/contracts.ts";
 import { getDb } from "../../db/client.ts";
@@ -25,7 +26,7 @@ interface SeedStore {
   orders?: Array<{
     id: number;
     userId: number;
-    status: "pending" | "submitted";
+    status: OrderStatus;
     total: number;
     createdAt: string;
     submittedAt?: string;
@@ -62,6 +63,36 @@ function normalizeSeedData(seed: SeedStore): Required<SeedStore> {
     menu: Array.isArray(seed.menu) ? seed.menu : [],
     orders: Array.isArray(seed.orders) ? seed.orders : [],
   };
+}
+
+const managedOrderStatuses: OrderStatus[] = [
+  "submitted",
+  "preparing",
+  "ready",
+  "completed",
+  "cancelled",
+];
+
+function normalizeOrderStatus(status: unknown): OrderStatus {
+  return status === "submitted" ||
+    status === "preparing" ||
+    status === "ready" ||
+    status === "completed" ||
+    status === "cancelled"
+    ? status
+    : "pending";
+}
+
+function canTransitionOrderStatus(from: OrderStatus, to: OrderStatus): boolean {
+  if (from === "pending") {
+    return false;
+  }
+
+  if (from === "completed" || from === "cancelled") {
+    return false;
+  }
+
+  return managedOrderStatuses.includes(to) && to !== "pending";
 }
 
 export class PgStore implements Store {
@@ -284,7 +315,7 @@ export class PgStore implements Store {
     const normalizedUserId = normalizeUserId(userId);
     return this.orders
       .filter(
-        (order) => order.userId === normalizedUserId && order.status === "submitted",
+        (order) => order.userId === normalizedUserId && order.status !== "pending",
       )
       .sort((a, b) => b.createdAt.localeCompare(a.createdAt));
   }
@@ -319,7 +350,7 @@ export class PgStore implements Store {
       userId: normalizeUserId(input.userId),
       items: [],
       total: inserted.total,
-      status: inserted.status === "submitted" ? "submitted" : "pending",
+      status: normalizeOrderStatus(inserted.status),
       createdAt:
         inserted.createdAt instanceof Date
           ? inserted.createdAt.toISOString()
@@ -506,6 +537,33 @@ export class PgStore implements Store {
     return { ok: true, order };
   }
 
+  async updateOrderStatus(
+    orderId: number,
+    input: { status: OrderStatus },
+  ): Promise<
+    | { ok: true; order: Order }
+    | { ok: false; code: "ORDER_NOT_FOUND" | "INVALID_STATUS_TRANSITION" }
+  > {
+    const order = this.orders.find((targetOrder) => targetOrder.id === orderId);
+    if (!order) {
+      return { ok: false, code: "ORDER_NOT_FOUND" };
+    }
+
+    const nextStatus = normalizeOrderStatus(input.status);
+    if (!canTransitionOrderStatus(order.status, nextStatus)) {
+      return { ok: false, code: "INVALID_STATUS_TRANSITION" };
+    }
+
+    await getDb()
+      .update(ordersTable)
+      .set({ status: nextStatus })
+      .where(eq(ordersTable.id, orderId));
+
+    order.status = nextStatus;
+
+    return { ok: true, order };
+  }
+
   private async seedFromJsonIfEmpty(): Promise<void> {
     const [usersCountRow] = await getDb()
       .select({ value: sql<number>`count(*)` })
@@ -687,7 +745,7 @@ export class PgStore implements Store {
       userId: String(row.userId).padStart(4, "0"),
       items: itemsByOrderId.get(row.id) ?? [],
       total: row.total,
-      status: row.status === "submitted" ? "submitted" : "pending",
+      status: normalizeOrderStatus(row.status),
       createdAt:
         row.createdAt instanceof Date
           ? row.createdAt.toISOString()

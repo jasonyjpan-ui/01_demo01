@@ -1,5 +1,11 @@
 import { mkdir, rename } from "node:fs/promises";
-import type { MenuItem, Order, OrderItem, UserRole } from "../../shared/contracts.ts";
+import type {
+  MenuItem,
+  Order,
+  OrderItem,
+  OrderStatus,
+  UserRole,
+} from "../../shared/contracts.ts";
 import type { Store } from "../Store.ts";
 
 interface StoredUser {
@@ -93,6 +99,36 @@ function normalizeMenuItem(item: Partial<MenuItem>): MenuItem {
     createdAt: item.createdAt,
     changedAt: item.changedAt,
   };
+}
+
+const managedOrderStatuses: OrderStatus[] = [
+  "submitted",
+  "preparing",
+  "ready",
+  "completed",
+  "cancelled",
+];
+
+function normalizeOrderStatus(status: unknown): OrderStatus {
+  return status === "submitted" ||
+    status === "preparing" ||
+    status === "ready" ||
+    status === "completed" ||
+    status === "cancelled"
+    ? status
+    : "pending";
+}
+
+function canTransitionOrderStatus(from: OrderStatus, to: OrderStatus): boolean {
+  if (from === "pending") {
+    return false;
+  }
+
+  if (from === "completed" || from === "cancelled") {
+    return false;
+  }
+
+  return managedOrderStatuses.includes(to) && to !== "pending";
 }
 
 function normalizeUserId(rawId: unknown): string {
@@ -199,9 +235,11 @@ export class JsonFileStore implements Store {
             ...orderItem,
             item: normalizeMenuItem(orderItem.item),
           })),
-          status: order.status === "submitted" ? "submitted" : "pending",
+          status: normalizeOrderStatus(order.status),
           submittedAt:
-            order.status === "submitted" ? order.submittedAt : undefined,
+            normalizeOrderStatus(order.status) !== "pending"
+              ? order.submittedAt
+              : undefined,
         })),
         userIdCounter: parsed.userIdCounter ?? 0,
         menuIdCounter: parsed.menuIdCounter ?? 0,
@@ -473,7 +511,7 @@ export class JsonFileStore implements Store {
       .filter(
         (order) =>
           normalizeUserId(order.userId) === normalizedUserId &&
-          order.status === "submitted",
+          order.status !== "pending",
       )
       .sort((a, b) => b.createdAt.localeCompare(a.createdAt));
   }
@@ -616,6 +654,29 @@ export class JsonFileStore implements Store {
 
     order.status = "submitted";
     order.submittedAt = new Date().toISOString();
+    await this.persist();
+
+    return { ok: true, order };
+  }
+
+  async updateOrderStatus(
+    orderId: number,
+    input: { status: OrderStatus },
+  ): Promise<
+    | { ok: true; order: Order }
+    | { ok: false; code: "ORDER_NOT_FOUND" | "INVALID_STATUS_TRANSITION" }
+  > {
+    const order = this.orders.find((targetOrder) => targetOrder.id === orderId);
+    if (!order) {
+      return { ok: false, code: "ORDER_NOT_FOUND" };
+    }
+
+    const nextStatus = normalizeOrderStatus(input.status);
+    if (!canTransitionOrderStatus(order.status, nextStatus)) {
+      return { ok: false, code: "INVALID_STATUS_TRANSITION" };
+    }
+
+    order.status = nextStatus;
     await this.persist();
 
     return { ok: true, order };

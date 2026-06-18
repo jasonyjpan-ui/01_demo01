@@ -52,12 +52,20 @@ export interface OrderItem {
   qty: number;
 }
 
+export type OrderStatus =
+  | "pending"
+  | "submitted"
+  | "preparing"
+  | "ready"
+  | "completed"
+  | "cancelled";
+
 export interface Order {
   id: number;
   userId: string;
   items: OrderItem[];
   total: number;
-  status: "pending" | "submitted";
+  status: OrderStatus;
   createdAt: string;
   submittedAt?: string;
 }
