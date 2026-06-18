@@ -11,6 +11,13 @@
       "email": "amy@example.com",
       "name": "Amy",
       "password": "1234"
+    },
+    {
+      "id": "0003",
+      "email": "jason.yj.pan@gmail.com",
+      "name": "an p",
+      "password": "",
+      "googleSub": "116067495439343297338"
     }
   ],
   "menu": [
@@ -508,7 +515,7 @@
       "createdAt": "2026-06-17T20:17:26.080Z"
     }
   ],
-  "userIdCounter": 2,
+  "userIdCounter": 3,
   "menuIdCounter": 15,
   "orderIdCounter": 7
 }

@@ -1,6 +1,6 @@
 import { mkdir, rename } from "node:fs/promises";
 import { dirname } from "node:path";
-import type { SessionUser } from "../shared/contracts.ts";
+import type { SessionUser, UserRole } from "../shared/contracts.ts";
 import type { Auth } from "./Auth.ts";
 
 interface StoredUser {
@@ -9,6 +9,7 @@ interface StoredUser {
   name: string;
   password: string;
   googleSub?: string;
+  role?: UserRole;
 }
 
 interface DataStore {
@@ -37,6 +38,14 @@ function normalizeUserId(rawId: unknown): string {
   return "0001";
 }
 
+function normalizeRole(user: Partial<StoredUser>): UserRole {
+  if (user.role === "merchant") {
+    return "merchant";
+  }
+
+  return user.email === "amy@example.com" ? "merchant" : "customer";
+}
+
 function normalizeStoredUser(user: Partial<StoredUser>): StoredUser {
   return {
     id: normalizeUserId(user.id),
@@ -44,6 +53,7 @@ function normalizeStoredUser(user: Partial<StoredUser>): StoredUser {
     name: user.name ?? "",
     password: user.password ?? "",
     googleSub: user.googleSub,
+    role: normalizeRole(user),
   };
 }
 
@@ -52,6 +62,7 @@ function toSessionUser(user: StoredUser): SessionUser {
     id: user.id,
     email: user.email,
     name: user.name,
+    role: user.role ?? "customer",
   };
 }
 
@@ -61,12 +72,14 @@ const defaultUsers: StoredUser[] = [
     email: "demo@example.com",
     name: "示範使用者",
     password: "1234",
+    role: "customer",
   },
   {
     id: "0002",
     email: "amy@example.com",
     name: "Amy",
     password: "1234",
+    role: "merchant",
   },
 ];
 
@@ -153,6 +166,7 @@ export class DemoAuth implements Auth {
       name: input.name || normalizedEmail,
       password: "",
       googleSub: input.googleSub,
+      role: "customer",
     };
 
     this.users.push(newUser);

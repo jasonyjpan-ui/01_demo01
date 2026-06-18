@@ -1,3 +1,5 @@
+export type UserRole = "customer" | "merchant";
+
 export interface MenuItem {
   id: number;
   logicalId?: number;
@@ -35,12 +37,14 @@ export interface User {
   id: string;
   email: string;
   name: string;
+  role?: UserRole;
 }
 
 export interface SessionUser {
   id: string;
   email: string;
   name: string;
+  role?: UserRole;
 }
 
 export interface OrderItem {

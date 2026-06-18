@@ -1,5 +1,5 @@
 import { mkdir, rename } from "node:fs/promises";
-import type { MenuItem, Order, OrderItem } from "../../shared/contracts.ts";
+import type { MenuItem, Order, OrderItem, UserRole } from "../../shared/contracts.ts";
 import type { Store } from "../Store.ts";
 
 interface StoredUser {
@@ -7,6 +7,7 @@ interface StoredUser {
   email: string;
   name: string;
   password: string;
+  role?: UserRole;
 }
 
 interface DataStore {
@@ -110,12 +111,21 @@ function normalizeUserId(rawId: unknown): string {
   return "0001";
 }
 
+function normalizeUserRole(user: Partial<StoredUser>): UserRole {
+  if (user.role === "merchant") {
+    return "merchant";
+  }
+
+  return user.email === "amy@example.com" ? "merchant" : "customer";
+}
+
 function normalizeUser(user: Partial<StoredUser>): StoredUser {
   return {
     id: normalizeUserId(user.id),
     email: user.email ?? "",
     name: user.name ?? "",
     password: user.password ?? "",
+    role: normalizeUserRole(user),
   };
 }
 
@@ -125,12 +135,14 @@ const defaultUsers: StoredUser[] = [
     email: "demo@example.com",
     name: "示範使用者",
     password: "1234",
+    role: "customer",
   },
   {
     id: "0002",
     email: "amy@example.com",
     name: "Amy",
     password: "1234",
+    role: "merchant",
   },
 ];
 

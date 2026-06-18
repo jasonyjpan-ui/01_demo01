@@ -80,6 +80,7 @@ const safeUserSchema = t.Object({
   id: t.String({ minLength: 1 }),
   email: t.String({ minLength: 3 }),
   name: t.String({ minLength: 1 }),
+  role: t.Optional(t.Union([t.Literal("customer"), t.Literal("merchant")])),
 });
 
 const menuItemSchema = t.Object({
@@ -198,6 +199,26 @@ function buildGoogleLoginResultUrl(
   }
 
   return target.toString();
+}
+
+function getRequestUser(request: Request) {
+  const userId = request.headers.get("x-user-id");
+  if (!userId) {
+    return undefined;
+  }
+
+  return auth.getUserById(userId);
+}
+
+function isMerchantRequest(request: Request) {
+  return getRequestUser(request)?.role === "merchant";
+}
+
+function merchantRequired() {
+  return {
+    error: "Forbidden",
+    message: "Only merchant users can manage menu items.",
+  };
 }
 
 if (hasPublicAssets) {
@@ -503,7 +524,12 @@ app.get("/api/menu", () => ({ data: [...store.getMenu()] }), {
 
 app.post(
   "/api/menu",
-  async ({ body, set }) => {
+  async ({ body, request, set }) => {
+    if (!isMerchantRequest(request)) {
+      set.status = 403;
+      return merchantRequired();
+    }
+
     const newMenuItem = await store.createMenuItem(body);
     set.status = 201;
     return { data: newMenuItem };
@@ -523,13 +549,19 @@ app.post(
     },
     response: {
       201: menuItemResponseSchema,
+      403: apiErrorResponseSchema,
     },
   },
 );
 
 app.patch(
   "/api/menu/:id",
-  async ({ params, body, set }) => {
+  async ({ params, body, request, set }) => {
+    if (!isMerchantRequest(request)) {
+      set.status = 403;
+      return merchantRequired();
+    }
+
     const menuId = parseInt(params.id);
     const existingMenuItem = store.getMenu().find((item) => item.id === menuId);
 
@@ -567,6 +599,7 @@ app.patch(
     },
     response: {
       200: menuItemResponseSchema,
+      403: apiErrorResponseSchema,
       404: apiErrorResponseSchema,
     },
   },
@@ -589,7 +622,12 @@ app.get(
 
 app.get(
   "/api/menu/archived",
-  async ({ set }) => {
+  async ({ request, set }) => {
+    if (!isMerchantRequest(request)) {
+      set.status = 403;
+      return merchantRequired();
+    }
+
     if (!store.getArchivedMenuItems) {
       set.status = 501;
       return { error: "Archived menu is not supported in this storage backend" };
@@ -606,6 +644,7 @@ app.get(
     },
     response: {
       200: menuListResponseSchema,
+      403: apiErrorResponseSchema,
       501: apiErrorResponseSchema,
     },
   },
@@ -614,7 +653,12 @@ app.get(
 // 版本歷史查詢 API
 app.get(
   "/api/menu/:id/history",
-  async ({ params, set }) => {
+  async ({ params, request, set }) => {
+    if (!isMerchantRequest(request)) {
+      set.status = 403;
+      return merchantRequired();
+    }
+
     const menuId = parseInt(params.id);
     
     if (store.getMenuItemHistory) {
@@ -660,6 +704,7 @@ app.get(
           changedAt: t.Optional(t.String()),
         })),
       }),
+      403: apiErrorResponseSchema,
       404: apiErrorResponseSchema,
       501: apiErrorResponseSchema,
     },
@@ -668,7 +713,12 @@ app.get(
 
 app.delete(
   "/api/menu/:id",
-  async ({ params, set }) => {
+  async ({ params, request, set }) => {
+    if (!isMerchantRequest(request)) {
+      set.status = 403;
+      return merchantRequired();
+    }
+
     const menuId = parseInt(params.id);
     const removedMenuItem = await store.deleteMenuItem(menuId);
 
@@ -690,6 +740,7 @@ app.delete(
     },
     response: {
       200: menuItemResponseSchema,
+      403: apiErrorResponseSchema,
       404: apiErrorResponseSchema,
     },
   },
@@ -697,7 +748,12 @@ app.delete(
 
 app.post(
   "/api/menu/:id/restore",
-  async ({ params, body, set }) => {
+  async ({ params, body, request, set }) => {
+    if (!isMerchantRequest(request)) {
+      set.status = 403;
+      return merchantRequired();
+    }
+
     if (!store.restoreMenuItem) {
       set.status = 501;
       return { error: "Menu restore is not supported in this storage backend" };
@@ -730,6 +786,7 @@ app.post(
     },
     response: {
       200: menuItemResponseSchema,
+      403: apiErrorResponseSchema,
       404: apiErrorResponseSchema,
       501: apiErrorResponseSchema,
     },

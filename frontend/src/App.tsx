@@ -71,6 +71,7 @@ function decodeGoogleLoginUser(rawUser: string): SafeUser | null {
         id: parsed.id,
         email: parsed.email,
         name: parsed.name,
+        role: parsed.role === "merchant" ? "merchant" : "customer",
       };
     }
   } catch (error) {
@@ -126,6 +127,11 @@ export default function App() {
   const [menuHistoryItem, setMenuHistoryItem] = useState<MenuItem | null>(null);
   const [menuHistory, setMenuHistory] = useState<MenuItem[]>([]);
   const [menuHistoryLoading, setMenuHistoryLoading] = useState(false);
+  const isMerchant = user?.role === "merchant";
+
+  function authHeaders(): Record<string, string> {
+    return user ? { "x-user-id": user.id } : {};
+  }
 
   function syncCartFromOrder(order: Order) {
     setCurrentOrder(order);
@@ -160,8 +166,15 @@ export default function App() {
     return fetchedItems;
   }
 
-  async function loadArchivedMenu(): Promise<MenuItem[]> {
-    const response = await fetch(buildApiUrl("/api/menu/archived"));
+  async function loadArchivedMenu(activeUser: SafeUser | null = user): Promise<MenuItem[]> {
+    if (activeUser?.role !== "merchant") {
+      setArchivedItems([]);
+      return [];
+    }
+
+    const response = await fetch(buildApiUrl("/api/menu/archived"), {
+      headers: { "x-user-id": activeUser.id },
+    });
     if (!response.ok) {
       throw new Error(`Load archived menu failed: HTTP ${response.status}`);
     }
@@ -264,6 +277,7 @@ export default function App() {
             id: normalizedUserId,
             email: parsedUser.email,
             name: parsedUser.name,
+            role: parsedUser.role === "merchant" ? "merchant" : "customer",
           });
         }
       } catch {
@@ -288,7 +302,7 @@ export default function App() {
       }
     };
 
-    Promise.all([loadMenu(), loadArchivedMenu(), loadGoogleStatus()])
+    Promise.all([loadMenu(), loadGoogleStatus()])
       .catch((fetchError) => {
         if (mounted) {
           setError("菜單讀取失敗，請稍後再試。");
@@ -317,6 +331,15 @@ export default function App() {
       setActionError("讀取使用者訂單失敗，請稍後再試。");
       console.error(refreshError);
     });
+
+    if (user.role === "merchant") {
+      void loadArchivedMenu(user).catch((archivedError) => {
+        setActionError("讀取已下架品項失敗，請稍後再試。");
+        console.error(archivedError);
+      });
+    } else {
+      setArchivedItems([]);
+    }
   }, [user]);
 
   const grouped = useMemo(() => {
@@ -766,7 +789,7 @@ export default function App() {
     try {
       const response = await fetch(buildApiUrl(`/api/menu/${editingMenuItem.id}`), {
         method: "PATCH",
-        headers: { "Content-Type": "application/json" },
+        headers: { "Content-Type": "application/json", ...authHeaders() },
         body: JSON.stringify({
           name: editName.trim(),
           price: nextPrice,
@@ -806,7 +829,9 @@ export default function App() {
     setMenuHistoryLoading(true);
 
     try {
-      const response = await fetch(buildApiUrl(`/api/menu/${item.id}/history`));
+      const response = await fetch(buildApiUrl(`/api/menu/${item.id}/history`), {
+        headers: authHeaders(),
+      });
       const payload = (await response.json()) as ApiDataResponse<MenuItem[]>;
       if (!response.ok) {
         throw new Error(`HTTP ${response.status}`);
@@ -828,6 +853,7 @@ export default function App() {
     try {
       const response = await fetch(buildApiUrl(`/api/menu/${item.id}`), {
         method: "DELETE",
+        headers: authHeaders(),
       });
       const payload = await response.json();
 
@@ -859,7 +885,7 @@ export default function App() {
     try {
       const response = await fetch(buildApiUrl(`/api/menu/${item.id}/restore`), {
         method: "POST",
-        headers: { "Content-Type": "application/json" },
+        headers: { "Content-Type": "application/json", ...authHeaders() },
         body: JSON.stringify({
           changeReason: `重新上架：還原自 v${item.version}`,
         }),
@@ -1088,34 +1114,36 @@ export default function App() {
                               }`}
                         </button>
                       </div>
-                      <div className="grid grid-cols-3 gap-2">
-                        <button
-                          type="button"
-                          className="btn btn-xs btn-outline"
-                          onClick={() => {
-                            void openMenuHistory(item);
-                          }}
-                        >
-                          版本
-                        </button>
-                        <button
-                          type="button"
-                          className="btn btn-xs btn-outline"
-                          onClick={() => startMenuEdit(item)}
-                        >
-                          編輯
-                        </button>
-                        <button
-                          type="button"
-                          className="btn btn-xs btn-error btn-outline"
-                          disabled={menuActionId === item.id}
-                          onClick={() => {
-                            void archiveMenuItem(item);
-                          }}
-                        >
-                          下架
-                        </button>
-                      </div>
+                      {isMerchant ? (
+                        <div className="grid grid-cols-3 gap-2">
+                          <button
+                            type="button"
+                            className="btn btn-xs btn-outline"
+                            onClick={() => {
+                              void openMenuHistory(item);
+                            }}
+                          >
+                            版本
+                          </button>
+                          <button
+                            type="button"
+                            className="btn btn-xs btn-outline"
+                            onClick={() => startMenuEdit(item)}
+                          >
+                            編輯
+                          </button>
+                          <button
+                            type="button"
+                            className="btn btn-xs btn-error btn-outline"
+                            disabled={menuActionId === item.id}
+                            onClick={() => {
+                              void archiveMenuItem(item);
+                            }}
+                          >
+                            下架
+                          </button>
+                        </div>
+                      ) : null}
                     </div>
                   </article>
                 ))}
@@ -1124,30 +1152,31 @@ export default function App() {
           ))
         )}
 
-        <section className="mt-10">
-          <div className="mb-4 flex flex-wrap items-center justify-between gap-2">
-            <h2 className="text-2xl font-bold">已下架品項</h2>
-            <button
-              type="button"
-              className="btn btn-sm btn-outline"
-              onClick={() => {
-                void loadArchivedMenu();
-              }}
-            >
-              重新整理
-            </button>
-          </div>
-          {archivedItems.length === 0 ? (
-            <div className="alert alert-info">
-              <span>目前沒有下架品項。</span>
+        {isMerchant ? (
+          <section className="mt-10">
+            <div className="mb-4 flex flex-wrap items-center justify-between gap-2">
+              <h2 className="text-2xl font-bold">已下架品項</h2>
+              <button
+                type="button"
+                className="btn btn-sm btn-outline"
+                onClick={() => {
+                  void loadArchivedMenu();
+                }}
+              >
+                重新整理
+              </button>
             </div>
-          ) : (
-            <div className="grid grid-cols-1 gap-3 md:grid-cols-2 lg:grid-cols-3">
-              {archivedItems.map((item) => (
-                <article
-                  key={item.id}
-                  className="rounded border border-base-300 bg-base-100 p-4 shadow-sm"
-                >
+            {archivedItems.length === 0 ? (
+              <div className="alert alert-info">
+                <span>目前沒有下架品項。</span>
+              </div>
+            ) : (
+              <div className="grid grid-cols-1 gap-3 md:grid-cols-2 lg:grid-cols-3">
+                {archivedItems.map((item) => (
+                  <article
+                    key={item.id}
+                    className="rounded border border-base-300 bg-base-100 p-4 shadow-sm"
+                  >
                   <div className="flex flex-wrap items-start justify-between gap-2">
                     <div>
                       <h3 className="font-semibold">{item.name}</h3>
@@ -1182,11 +1211,12 @@ export default function App() {
                       </button>
                     </div>
                   </div>
-                </article>
-              ))}
-            </div>
-          )}
-        </section>
+                  </article>
+                ))}
+              </div>
+            )}
+          </section>
+        ) : null}
 
         {user ? (
           <section className="mt-10">
