@@ -12,6 +12,7 @@ import { OrderSubmitError } from "./OrderSubmitError";
 
 const apiBaseUrl = (import.meta.env.VITE_API_BASE_URL || "").replace(/\/$/, "");
 const USER_STORAGE_KEY = "breakfast.user";
+const ADD_EGG_PRICE = 15;
 
 type SafeUser = Omit<User, "password">;
 type ManagedOrderStatus = Exclude<OrderStatus, "pending">;
@@ -78,6 +79,24 @@ function sameLogicalItem(a: MenuItem, b: MenuItem): boolean {
   );
 }
 
+function getCartItemKey(
+  itemId: number,
+  options?: { addEgg?: boolean },
+): string {
+  return `${itemId}:${options?.addEgg ? "egg" : "plain"}`;
+}
+
+function getOrderItemUnitPrice(orderItem: {
+  item: MenuItem;
+  options?: { addEgg?: boolean };
+  unitPrice?: number;
+}): number {
+  return (
+    orderItem.unitPrice ??
+    orderItem.item.price + (orderItem.options?.addEgg ? ADD_EGG_PRICE : 0)
+  );
+}
+
 function formatDateTime(value?: string) {
   if (!value) {
     return "-";
@@ -138,7 +157,7 @@ export default function App() {
   const [merchantOrderActionId, setMerchantOrderActionId] = useState<
     number | null
   >(null);
-  const [cartQtyByItemId, setCartQtyByItemId] = useState<Record<number, number>>(
+  const [cartQtyByItemKey, setCartQtyByItemKey] = useState<Record<string, number>>(
     {},
   );
   const [cartTotal, setCartTotal] = useState(0);
@@ -184,21 +203,21 @@ export default function App() {
 
   function syncCartFromOrder(order: Order) {
     setCurrentOrder(order);
-    const nextQtyByItemId = order.items.reduce(
+    const nextQtyByItemKey = order.items.reduce(
       (acc, orderItem) => {
-        acc[orderItem.item.id] = orderItem.qty;
+        acc[getCartItemKey(orderItem.item.id, orderItem.options)] = orderItem.qty;
         return acc;
       },
-      {} as Record<number, number>,
+      {} as Record<string, number>,
     );
 
-    setCartQtyByItemId(nextQtyByItemId);
+    setCartQtyByItemKey(nextQtyByItemKey);
     setCartTotal(order.total);
   }
 
   function resetCartState() {
     setOrderId(null);
-    setCartQtyByItemId({});
+    setCartQtyByItemKey({});
     setCartTotal(0);
     setCurrentOrder(null);
   }
@@ -521,36 +540,56 @@ export default function App() {
   }, [items]);
 
   const cartItemCount = useMemo(
-    () => Object.values(cartQtyByItemId).reduce((sum, qty) => sum + qty, 0),
-    [cartQtyByItemId],
+    () => Object.values(cartQtyByItemKey).reduce((sum, qty) => sum + qty, 0),
+    [cartQtyByItemKey],
+  );
+
+  const cartQtyByItemId = useMemo(
+    () =>
+      Object.fromEntries(
+        Object.entries(cartQtyByItemKey)
+          .filter(([key]) => key.endsWith(":plain"))
+          .map(([key, qty]) => [Number(key.split(":")[0]), qty]),
+      ) as Record<number, number>,
+    [cartQtyByItemKey],
   );
 
   const cartDetails = useMemo(() => {
     const itemById = new Map(items.map((item) => [item.id, item]));
-    const orderItemById = new Map(
+    const orderItemByKey = new Map(
       (currentOrder?.items ?? []).map((orderItem) => [
-        orderItem.item.id,
-        orderItem.item,
+        getCartItemKey(orderItem.item.id, orderItem.options),
+        orderItem,
       ]),
     );
 
-    return Object.entries(cartQtyByItemId)
-      .map(([itemIdText, qty]) => {
+    return Object.entries(cartQtyByItemKey)
+      .map(([itemKey, qty]) => {
+        const [itemIdText, optionKey] = itemKey.split(":");
         const itemId = Number(itemIdText);
-        const item = itemById.get(itemId) ?? orderItemById.get(itemId);
+        const orderItem = orderItemByKey.get(itemKey);
+        const item = itemById.get(itemId) ?? orderItem?.item;
+        const options = orderItem?.options ?? { addEgg: optionKey === "egg" };
         if (!item || qty <= 0) {
           return null;
         }
 
+        const unitPrice =
+          orderItem?.unitPrice ??
+          item.price + (options.addEgg ? ADD_EGG_PRICE : 0);
+
         return {
+          key: itemKey,
           itemId,
           qty,
           item,
-          subtotal: item.price * qty,
+          options,
+          unitPrice,
+          subtotal: unitPrice * qty,
         };
       })
       .filter((entry): entry is NonNullable<typeof entry> => entry !== null);
-  }, [cartQtyByItemId, currentOrder, items]);
+  }, [cartQtyByItemKey, currentOrder, items]);
 
   async function ensureOrder(): Promise<number> {
     if (!user) {
@@ -646,7 +685,10 @@ export default function App() {
     window.location.href = buildApiUrl("/api/auth/google/start");
   }
 
-  async function addToCart(item: MenuItem): Promise<void> {
+  async function addToCart(
+    item: MenuItem,
+    options: { addEgg?: boolean } = {},
+  ): Promise<void> {
     setActionError("");
     setActiveItemId(item.id);
 
@@ -656,7 +698,8 @@ export default function App() {
       }
 
       const targetOrderId = await ensureOrder();
-      const currentQty = cartQtyByItemId[item.id] ?? 0;
+      const itemKey = getCartItemKey(item.id, options);
+      const currentQty = cartQtyByItemKey[itemKey] ?? 0;
       const nextQty = currentQty + 1;
 
       const response = await apiFetch(`/api/orders/${targetOrderId}`, {
@@ -666,6 +709,7 @@ export default function App() {
           userId: user.id,
           itemId: item.id,
           qty: nextQty,
+          options,
         }),
       });
 
@@ -693,7 +737,10 @@ export default function App() {
         try {
           const recoveredOrder = await loadCurrentOrder(user.id);
           const recoveredQty = recoveredOrder?.items.find(
-            (orderItem) => orderItem.item.id === item.id,
+            (orderItem) =>
+              orderItem.item.id === item.id &&
+              getCartItemKey(orderItem.item.id, orderItem.options) ===
+                getCartItemKey(item.id, options),
           )?.qty;
 
           if (typeof recoveredQty === "number" && recoveredQty > 0) {
@@ -728,6 +775,7 @@ export default function App() {
             userId: user.id,
             itemId: detail.itemId,
             qty: 0,
+            options: detail.options,
           }),
         });
 
@@ -803,25 +851,23 @@ export default function App() {
       return;
     }
 
-    const staleItemIds = new Set<number>();
-    currentOrder.items.forEach((orderItem) => {
+    const staleOrderItems = currentOrder.items.filter((orderItem) => {
       const currentMenu = items.find((menuItem) =>
         sameLogicalItem(menuItem, orderItem.item),
       );
-      if (!currentMenu || currentMenu.version !== orderItem.item.version) {
-        staleItemIds.add(orderItem.item.id);
-      }
+      return !currentMenu || currentMenu.version !== orderItem.item.version;
     });
 
-    for (const itemId of staleItemIds) {
+    for (const orderItem of staleOrderItems) {
       try {
         const response = await apiFetch(`/api/orders/${orderId}`, {
           method: "PATCH",
           headers: { "Content-Type": "application/json" },
           body: JSON.stringify({
             userId: user.id,
-            itemId,
+            itemId: orderItem.item.id,
             qty: 0,
+            options: orderItem.options,
           }),
         });
 
@@ -834,7 +880,7 @@ export default function App() {
           syncCartFromOrder(payload.data);
         }
       } catch (removeError) {
-        console.error(`Failed to remove item ${itemId}:`, removeError);
+        console.error(`Failed to remove item ${orderItem.item.id}:`, removeError);
       }
     }
 
@@ -868,6 +914,7 @@ export default function App() {
             userId: user.id,
             itemId: orderItem.item.id,
             qty: 0,
+            options: orderItem.options,
           }),
         });
 
@@ -882,6 +929,7 @@ export default function App() {
             userId: user.id,
             itemId: currentMenu.id,
             qty: orderItem.qty,
+            options: orderItem.options,
           }),
         });
 
@@ -1519,6 +1567,24 @@ export default function App() {
                                   : ""
                               }`}
                         </button>
+                        <button
+                          className="btn btn-sm btn-outline"
+                          onClick={() => {
+                            void addToCart(item, { addEgg: true });
+                          }}
+                          disabled={activeItemId === item.id || !user}
+                        >
+                          加蛋 +${ADD_EGG_PRICE}
+                          {cartQtyByItemKey[
+                            getCartItemKey(item.id, { addEgg: true })
+                          ]
+                            ? ` (${
+                                cartQtyByItemKey[
+                                  getCartItemKey(item.id, { addEgg: true })
+                                ]
+                              })`
+                            : ""}
+                        </button>
                       </div>
                       {isMerchant ? (
                         <div className="grid grid-cols-5 gap-2">
@@ -1656,9 +1722,11 @@ export default function App() {
                           className="flex justify-between gap-3"
                         >
                           <span>
-                            {detail.item.name} x {detail.qty}
+                            {detail.item.name}
+                            {detail.options?.addEgg ? "（加蛋）" : ""} x{" "}
+                            {detail.qty}
                           </span>
-                          <span>${detail.item.price * detail.qty}</span>
+                          <span>${getOrderItemUnitPrice(detail) * detail.qty}</span>
                         </li>
                       ))}
                     </ul>
@@ -1791,8 +1859,10 @@ export default function App() {
                       </p>
                       <ul className="list-disc space-y-1 pl-5 text-sm">
                         {order.items.map((detail) => (
-                          <li key={`${order.id}-${detail.item.id}`}>
-                            {detail.item.name} x {detail.qty}
+                        <li key={`${order.id}-${detail.item.id}-${getCartItemKey(detail.item.id, detail.options)}`}>
+                          {detail.item.name}
+                          {detail.options?.addEgg ? "（加蛋）" : ""} x{" "}
+                          {detail.qty}
                           </li>
                         ))}
                       </ul>
@@ -1841,13 +1911,16 @@ export default function App() {
                   <ul className="space-y-3">
                     {cartDetails.map((detail) => (
                       <li
-                        key={detail.itemId}
+                        key={detail.key}
                         className="flex items-center justify-between rounded-lg bg-base-200 p-3"
                       >
                         <div>
-                          <p className="font-semibold">{detail.item.name}</p>
+                          <p className="font-semibold">
+                            {detail.item.name}
+                            {detail.options.addEgg ? "（加蛋）" : ""}
+                          </p>
                           <p className="text-sm opacity-70">
-                            單價 ${detail.item.price} x {detail.qty}
+                            單價 ${detail.unitPrice} x {detail.qty}
                           </p>
                         </div>
                         <p className="font-bold">${detail.subtotal}</p>

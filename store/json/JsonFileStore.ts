@@ -29,6 +29,8 @@ interface JsonFileStoreOptions {
   dataFilePath: string;
 }
 
+const ADD_EGG_PRICE = 15;
+
 const defaultMenu: MenuItem[] = [
   {
     id: 1,
@@ -74,8 +76,27 @@ function cloneDefaultMenu(): MenuItem[] {
 
 function calculateOrderTotal(items: OrderItem[]): number {
   return items.reduce((sum, orderItem) => {
-    return sum + orderItem.item.price * orderItem.qty;
+    return sum + getOrderItemUnitPrice(orderItem) * orderItem.qty;
   }, 0);
+}
+
+function normalizeOrderItem(item: Partial<OrderItem>): OrderItem {
+  const addEgg = item.options?.addEgg === true;
+  const menuItem = normalizeMenuItem(item.item ?? {});
+  return {
+    item: menuItem,
+    qty: item.qty ?? 0,
+    options: { addEgg },
+    unitPrice: item.unitPrice ?? menuItem.price + (addEgg ? ADD_EGG_PRICE : 0),
+  };
+}
+
+function getOrderItemOptionKey(item: Pick<OrderItem, "options">): string {
+  return item.options?.addEgg ? "egg" : "plain";
+}
+
+function getOrderItemUnitPrice(item: OrderItem): number {
+  return item.unitPrice ?? item.item.price + (item.options?.addEgg ? ADD_EGG_PRICE : 0);
 }
 
 function normalizeMenuItem(item: Partial<MenuItem>): MenuItem {
@@ -242,10 +263,7 @@ export class JsonFileStore implements Store {
         orders: parsed.orders.map((order) => ({
           ...order,
           userId: normalizeUserId(order.userId ?? fallbackUserId),
-          items: order.items.map((orderItem) => ({
-            ...orderItem,
-            item: normalizeMenuItem(orderItem.item),
-          })),
+          items: order.items.map((orderItem) => normalizeOrderItem(orderItem)),
           status: normalizeOrderStatus(order.status),
           submittedAt:
             normalizeOrderStatus(order.status) !== "pending"
@@ -590,6 +608,9 @@ export class JsonFileStore implements Store {
       userId: string;
       itemId: number;
       qty: number;
+      options?: {
+        addEgg?: boolean;
+      };
     },
   ): Promise<
     | { ok: true; order: Order }
@@ -618,8 +639,11 @@ export class JsonFileStore implements Store {
       return { ok: false, code: "ORDER_NOT_EDITABLE" };
     }
 
+    const optionKey = input.options?.addEgg ? "egg" : "plain";
     const existingItemIndex = order.items.findIndex(
-      (orderItem) => orderItem.item.id === input.itemId,
+      (orderItem) =>
+        orderItem.item.id === input.itemId &&
+        getOrderItemOptionKey(orderItem) === optionKey,
     );
 
     if (input.qty === 0) {
@@ -644,9 +668,18 @@ export class JsonFileStore implements Store {
       if (existingOrderItem) {
         existingOrderItem.qty = input.qty;
         existingOrderItem.item = { ...menuItem };
+        existingOrderItem.options = { addEgg: input.options?.addEgg === true };
+        existingOrderItem.unitPrice =
+          menuItem.price + (input.options?.addEgg ? ADD_EGG_PRICE : 0);
       }
     } else if (input.qty > 0) {
-      order.items.push({ item: { ...menuItem }, qty: input.qty });
+      const addEgg = input.options?.addEgg === true;
+      order.items.push({
+        item: { ...menuItem },
+        qty: input.qty,
+        options: { addEgg },
+        unitPrice: menuItem.price + (addEgg ? ADD_EGG_PRICE : 0),
+      });
     }
 
     order.total = calculateOrderTotal(order.items);

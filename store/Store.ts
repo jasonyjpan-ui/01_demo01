@@ -76,6 +76,9 @@ export interface Store {
       userId: string;
       itemId: number;
       qty: number;
+      options?: {
+        addEgg?: boolean;
+      };
     },
   ): Promise<
     { ok: true; order: Order } | { ok: false; code: UpdateOrderItemErrorCode }

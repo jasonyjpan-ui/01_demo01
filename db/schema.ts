@@ -72,11 +72,15 @@ export const orderItemsTable = pgTable(
     imageUrl: text("image_url").notNull(),
     qty: integer("qty").notNull(),
     version: integer("version").notNull().default(1),
+    optionKey: text("option_key").notNull().default("plain"),
+    addEgg: boolean("add_egg").notNull().default(false),
+    unitPrice: integer("unit_price"),
   },
   (table) => ({
     orderItemUniqueIdx: uniqueIndex("order_items_order_item_idx").on(
       table.orderId,
       table.itemId,
+      table.optionKey,
     ),
   }),
 );

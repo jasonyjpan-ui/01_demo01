@@ -22,6 +22,13 @@
       "when": 1781744400000,
       "tag": "0002_menu_item_sort_order",
       "breakpoints": true
+    },
+    {
+      "idx": 3,
+      "version": "7",
+      "when": 1781748000000,
+      "tag": "0003_order_item_add_egg_options",
+      "breakpoints": true
     }
   ]
 }

@@ -63,6 +63,32 @@ describe("JsonFileStore versioned menu behavior", () => {
     expect(categoryItems[1].id).toBe(first.id);
   });
 
+  it("keeps plain and add-egg variants as separate order items", async () => {
+    const store = await createStore();
+    const menuItem = store.getMenu()[0];
+    const order = await store.createOrder({ userId: "0001" });
+
+    const plainResult = await store.updateOrderItem(order.id, {
+      userId: "0001",
+      itemId: menuItem.id,
+      qty: 1,
+    });
+    expect(plainResult.ok).toBe(true);
+
+    const eggResult = await store.updateOrderItem(order.id, {
+      userId: "0001",
+      itemId: menuItem.id,
+      qty: 2,
+      options: { addEgg: true },
+    });
+    expect(eggResult.ok).toBe(true);
+
+    if (eggResult.ok) {
+      expect(eggResult.order.items).toHaveLength(2);
+      expect(eggResult.order.total).toBe(menuItem.price + (menuItem.price + 15) * 2);
+    }
+  });
+
   it("increments version on successful menu update", async () => {
     const store = await createStore();
     const menu = store.getMenu();

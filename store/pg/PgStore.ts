@@ -34,13 +34,23 @@ interface SeedStore {
   }>;
 }
 
+const ADD_EGG_PRICE = 15;
+
 function toSafeUser(user: User): Omit<User, "password"> {
   const { password: _password, ...safeUser } = user;
   return safeUser;
 }
 
 function calculateTotal(items: ReadonlyArray<OrderItem>): number {
-  return items.reduce((sum, item) => sum + item.item.price * item.qty, 0);
+  return items.reduce((sum, item) => sum + getOrderItemUnitPrice(item) * item.qty, 0);
+}
+
+function getOrderItemOptionKey(item: Pick<OrderItem, "options">): string {
+  return item.options?.addEgg ? "egg" : "plain";
+}
+
+function getOrderItemUnitPrice(item: OrderItem): number {
+  return item.unitPrice ?? item.item.price + (item.options?.addEgg ? ADD_EGG_PRICE : 0);
 }
 
 function compareMenuItems(a: MenuItem, b: MenuItem): number {
@@ -396,6 +406,9 @@ export class PgStore implements Store {
       userId: string;
       itemId: number;
       qty: number;
+      options?: {
+        addEgg?: boolean;
+      };
     },
   ): Promise<
     | { ok: true; order: Order }
@@ -422,8 +435,14 @@ export class PgStore implements Store {
       return { ok: false, code: "ORDER_NOT_EDITABLE" };
     }
 
+    const addEgg = input.options?.addEgg === true;
+    const optionKey = addEgg ? "egg" : "plain";
+    const unitPrice = (menuItem: MenuItem) =>
+      menuItem.price + (addEgg ? ADD_EGG_PRICE : 0);
     const existingOrderItemIndex = order.items.findIndex(
-      (item) => item.item.id === input.itemId,
+      (item) =>
+        item.item.id === input.itemId &&
+        getOrderItemOptionKey(item) === optionKey,
     );
 
     if (input.qty === 0) {
@@ -434,6 +453,7 @@ export class PgStore implements Store {
             and(
               eq(orderItemsTable.orderId, orderId),
               eq(orderItemsTable.itemId, input.itemId),
+              eq(orderItemsTable.optionKey, optionKey),
             ),
           );
         order.items.splice(existingOrderItemIndex, 1);
@@ -457,17 +477,25 @@ export class PgStore implements Store {
     if (existingOrderItemIndex !== -1) {
         await getDb()
           .update(orderItemsTable)
-          .set({ qty: input.qty, version: menuItem.version })
+          .set({
+            qty: input.qty,
+            version: menuItem.version,
+            addEgg,
+            unitPrice: unitPrice(menuItem),
+          })
           .where(
             and(
               eq(orderItemsTable.orderId, orderId),
               eq(orderItemsTable.itemId, input.itemId),
+              eq(orderItemsTable.optionKey, optionKey),
             ),
           );
         const target = order.items[existingOrderItemIndex];
         if (target) {
           target.qty = input.qty;
           target.item = { ...menuItem };
+          target.options = { addEgg };
+          target.unitPrice = unitPrice(menuItem);
         }
     } else if (input.qty > 0) {
       await getDb().insert(orderItemsTable).values({
@@ -480,6 +508,9 @@ export class PgStore implements Store {
         imageUrl: menuItem.image_url,
         qty: input.qty,
         version: menuItem.version,
+        optionKey,
+        addEgg,
+        unitPrice: unitPrice(menuItem),
       });
 
       order.items.push({
@@ -487,6 +518,8 @@ export class PgStore implements Store {
           ...menuItem,
         },
         qty: input.qty,
+        options: { addEgg },
+        unitPrice: unitPrice(menuItem),
       });
     }
 
@@ -664,6 +697,9 @@ export class PgStore implements Store {
               imageUrl: orderItem.item.image_url,
               qty: orderItem.qty,
               version: orderItem.item.version,
+              optionKey: getOrderItemOptionKey(orderItem),
+              addEgg: orderItem.options?.addEgg === true,
+              unitPrice: getOrderItemUnitPrice(orderItem),
             })),
           );
         }
@@ -714,6 +750,9 @@ export class PgStore implements Store {
         imageUrl: orderItemsTable.imageUrl,
         qty: orderItemsTable.qty,
         version: orderItemsTable.version,
+        optionKey: orderItemsTable.optionKey,
+        addEgg: orderItemsTable.addEgg,
+        unitPrice: orderItemsTable.unitPrice,
         logicalId: menuItemsTable.logicalId,
         entityId: menuItemsTable.entityId,
         isCurrentVersion: menuItemsTable.isCurrentVersion,
@@ -767,6 +806,8 @@ export class PgStore implements Store {
           isCurrentVersion: row.isCurrentVersion ?? row.version === row.currentMenuVersion,
         },
         qty: row.qty,
+        options: { addEgg: row.addEgg },
+        unitPrice: row.unitPrice ?? row.price + (row.addEgg ? ADD_EGG_PRICE : 0),
       });
       itemsByOrderId.set(row.orderId, orderItems);
     }

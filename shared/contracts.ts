@@ -51,6 +51,10 @@ export interface SessionUser {
 export interface OrderItem {
   item: MenuItem;
   qty: number;
+  options?: {
+    addEgg?: boolean;
+  };
+  unitPrice?: number;
 }
 
 export type OrderStatus =

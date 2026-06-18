@@ -136,6 +136,12 @@ const menuVersionMismatchResponseSchema = t.Object({
 const orderItemSchema = t.Object({
   item: menuItemSchema,
   qty: t.Number({ minimum: 0 }),
+  options: t.Optional(
+    t.Object({
+      addEgg: t.Optional(t.Boolean()),
+    }),
+  ),
+  unitPrice: t.Optional(t.Number({ minimum: 0 })),
 });
 
 const orderStatusSchema = t.Union([
@@ -185,6 +191,14 @@ const orderResponseEnvelopeSchema = t.Object({
 const nullableOrderResponseEnvelopeSchema = t.Object({
   data: t.Union([orderResponseSchema, t.Null()]),
 });
+
+function getOrderItemUnitPrice(orderItem: {
+  item: { price: number };
+  options?: { addEgg?: boolean };
+  unitPrice?: number;
+}): number {
+  return orderItem.unitPrice ?? orderItem.item.price + (orderItem.options?.addEgg ? 15 : 0);
+}
 
 const healthResponseSchema = t.Object({
   status: t.String(),
@@ -1215,6 +1229,7 @@ app.patch(
       userId: user.id,
       itemId: body.itemId,
       qty: body.qty,
+      options: body.options,
     });
 
     if (!result.ok && result.code === "ORDER_NOT_FOUND") {
@@ -1252,6 +1267,11 @@ app.patch(
       userId: t.String({ minLength: 1 }),
       itemId: t.Number({ minimum: 1 }),
       qty: t.Number({ minimum: 0 }),
+      options: t.Optional(
+        t.Object({
+          addEgg: t.Optional(t.Boolean()),
+        }),
+      ),
     }),
     detail: {
       tags: ["orders"],
@@ -1379,8 +1399,8 @@ app.post(
           })
           .map((oi) => ({
             id: oi.item.id,
-            name: oi.item.name,
-            orderedPrice: oi.item.price,
+            name: oi.options?.addEgg ? `${oi.item.name}（加蛋）` : oi.item.name,
+            orderedPrice: getOrderItemUnitPrice(oi),
             currentPrice: currentMenuItems.find(
               (m) =>
                 m.id === oi.item.id ||
