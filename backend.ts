@@ -1,7 +1,7 @@
 import { Elysia, t } from "elysia";
 import { openapi } from "@elysiajs/openapi";
 import { staticPlugin } from "@elysiajs/static";
-import { existsSync } from "node:fs";
+import { existsSync, readFileSync } from "node:fs";
 import toTaipeiDateTime from "./util.ts";
 import type { Order, OrderResponse } from "./shared/contracts.ts";
 import { createStore } from "./store/index.ts";
@@ -32,14 +32,40 @@ const auth = createAuth(
 );
 const hasPublicAssets =
   existsSync("./public") && existsSync("./public/index.html");
-const googleClientId = process.env.GOOGLE_CLIENT_ID;
-const googleClientSecret = process.env.GOOGLE_CLIENT_SECRET;
+
+function readDotEnvValue(key: string): string | undefined {
+  if (!existsSync(".env")) {
+    return undefined;
+  }
+
+  const escapedKey = key.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+  const pattern = new RegExp(`^\\s*${escapedKey}\\s*=\\s*(.*)\\s*$`);
+
+  for (const line of readFileSync(".env", "utf8").split(/\r?\n/)) {
+    const match = line.match(pattern);
+    if (!match) {
+      continue;
+    }
+
+    const value = match[1]?.trim() ?? "";
+    return value.replace(/^["']|["']$/g, "");
+  }
+
+  return undefined;
+}
+
+function getEnv(key: string): string | undefined {
+  return process.env[key] || readDotEnvValue(key);
+}
+
+const googleClientId = getEnv("GOOGLE_CLIENT_ID");
+const googleClientSecret = getEnv("GOOGLE_CLIENT_SECRET");
 const googleRedirectUri =
-  process.env.GOOGLE_REDIRECT_URI ??
+  getEnv("GOOGLE_REDIRECT_URI") ??
   `http://${host}:${port}/api/auth/google/callback`;
 const googleLoginRedirectUrl =
-  process.env.GOOGLE_LOGIN_REDIRECT_URL ??
-  process.env.FRONTEND_URL ??
+  getEnv("GOOGLE_LOGIN_REDIRECT_URL") ??
+  getEnv("FRONTEND_URL") ??
   `http://${host}:5173`;
 
 const googleOAuthStates = new Map<string, number>();
