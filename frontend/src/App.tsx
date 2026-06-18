@@ -929,6 +929,132 @@ export default function App() {
     setCreateImageUrl("");
   }
 
+  function drawWrappedText(
+    context: CanvasRenderingContext2D,
+    text: string,
+    x: number,
+    y: number,
+    maxWidth: number,
+    lineHeight: number,
+    maxLines: number,
+  ): number {
+    const chars = [...text];
+    let line = "";
+    let lineCount = 0;
+    let currentY = y;
+
+    for (let index = 0; index < chars.length; index += 1) {
+      const char = chars[index];
+      const testLine = `${line}${char}`;
+      if (context.measureText(testLine).width > maxWidth && line) {
+        context.fillText(line, x, currentY);
+        line = char;
+        lineCount += 1;
+        currentY += lineHeight;
+
+        if (lineCount >= maxLines - 1) {
+          const remaining = chars.slice(index + 1).join("");
+          line = remaining ? `${line}...` : line;
+          break;
+        }
+      } else {
+        line = testLine;
+      }
+    }
+
+    if (line && lineCount < maxLines) {
+      context.fillText(line, x, currentY);
+      currentY += lineHeight;
+    }
+
+    return currentY;
+  }
+
+  function generateMenuImage(): void {
+    const canvas = document.createElement("canvas");
+    canvas.width = 960;
+    canvas.height = 640;
+
+    const context = canvas.getContext("2d");
+    if (!context) {
+      setActionError("瀏覽器無法產生圖片，請改用圖片網址。");
+      return;
+    }
+
+    const name = createName.trim() || "新品菜單";
+    const category = createCategory.trim() || "今日推薦";
+    const description =
+      createDescription.trim() || "新鮮現做，適合早餐時光。";
+    const price = createPrice.trim();
+    const paletteIndex = Math.abs(
+      [...`${name}${category}`].reduce(
+        (sum, char) => sum + char.charCodeAt(0),
+        0,
+      ),
+    ) % 4;
+    const palettes = [
+      { bg: "#fff7ed", accent: "#ea580c", deep: "#7c2d12", soft: "#fed7aa" },
+      { bg: "#f0fdf4", accent: "#16a34a", deep: "#14532d", soft: "#bbf7d0" },
+      { bg: "#eff6ff", accent: "#2563eb", deep: "#1e3a8a", soft: "#bfdbfe" },
+      { bg: "#fdf2f8", accent: "#db2777", deep: "#831843", soft: "#fbcfe8" },
+    ];
+    const palette = palettes[paletteIndex];
+
+    context.fillStyle = palette.bg;
+    context.fillRect(0, 0, canvas.width, canvas.height);
+
+    context.fillStyle = palette.soft;
+    context.beginPath();
+    context.arc(790, 150, 190, 0, Math.PI * 2);
+    context.fill();
+
+    context.fillStyle = palette.accent;
+    context.beginPath();
+    context.roundRect(560, 240, 280, 220, 42);
+    context.fill();
+
+    context.fillStyle = "#ffffff";
+    context.beginPath();
+    context.arc(700, 350, 92, 0, Math.PI * 2);
+    context.fill();
+
+    context.strokeStyle = palette.deep;
+    context.lineWidth = 12;
+    context.beginPath();
+    context.arc(700, 350, 62, 0.15, Math.PI * 1.65);
+    context.stroke();
+
+    context.fillStyle = palette.accent;
+    context.beginPath();
+    context.roundRect(88, 88, 180, 50, 25);
+    context.fill();
+
+    context.fillStyle = "#ffffff";
+    context.font =
+      "700 28px system-ui, -apple-system, BlinkMacSystemFont, 'Noto Sans TC', sans-serif";
+    context.fillText(category, 118, 123);
+
+    context.fillStyle = palette.deep;
+    context.font =
+      "800 74px system-ui, -apple-system, BlinkMacSystemFont, 'Noto Sans TC', sans-serif";
+    drawWrappedText(context, name, 88, 250, 420, 82, 2);
+
+    context.fillStyle = "#475569";
+    context.font =
+      "500 30px system-ui, -apple-system, BlinkMacSystemFont, 'Noto Sans TC', sans-serif";
+    drawWrappedText(context, description, 92, 415, 420, 42, 3);
+
+    if (price) {
+      context.fillStyle = palette.deep;
+      context.font =
+        "800 58px system-ui, -apple-system, BlinkMacSystemFont, 'Noto Sans TC', sans-serif";
+      context.fillText(`$${price}`, 92, 570);
+    }
+
+    setCreateImageUrl(canvas.toDataURL("image/png"));
+    setActionError("");
+  }
+
   async function submitMenuCreate(): Promise<void> {
     const nextPrice = Number(createPrice);
     const trimmedName = createName.trim();
@@ -1755,6 +1881,13 @@ export default function App() {
                   onChange={(event) => setCreateImageUrl(event.target.value)}
                   placeholder="/imgs/menu/example.webp"
                 />
+                <button
+                  type="button"
+                  className="btn btn-outline btn-sm mt-2"
+                  onClick={generateMenuImage}
+                >
+                  自動產生圖片
+                </button>
               </label>
               <label className="form-control md:col-span-2">
                 <span className="label-text mb-1">描述</span>
@@ -1765,6 +1898,18 @@ export default function App() {
                   placeholder="簡短描述口味、份量或主要食材"
                 />
               </label>
+              {createImageUrl ? (
+                <figure className="overflow-hidden rounded border border-base-300 bg-base-200 md:col-span-2">
+                  <img
+                    src={createImageUrl}
+                    alt="菜單圖片預覽"
+                    className="h-56 w-full object-cover"
+                    onError={(event) => {
+                      event.currentTarget.style.display = "none";
+                    }}
+                  />
+                </figure>
+              ) : null}
               <datalist id="menu-category-suggestions">
                 {grouped.categories.map((category) => (
                   <option key={category} value={category} />
