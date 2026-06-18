@@ -91,6 +91,7 @@ function normalizeMenuItem(item: Partial<MenuItem>): MenuItem {
     category: item.category ?? "",
     description: item.description ?? "",
     image_url: item.image_url ?? "",
+    sortOrder: item.sortOrder ?? id,
     version: item.version ?? 1,
     isCurrentVersion: item.isCurrentVersion ?? true,
     supersedes: item.supersedes,
@@ -99,6 +100,16 @@ function normalizeMenuItem(item: Partial<MenuItem>): MenuItem {
     createdAt: item.createdAt,
     changedAt: item.changedAt,
   };
+}
+
+function compareMenuItems(a: MenuItem, b: MenuItem): number {
+  const categoryCompare = a.category.localeCompare(b.category, "zh-Hant");
+  if (categoryCompare !== 0) {
+    return categoryCompare;
+  }
+
+  const sortCompare = (a.sortOrder ?? a.id) - (b.sortOrder ?? b.id);
+  return sortCompare !== 0 ? sortCompare : a.id - b.id;
 }
 
 const managedOrderStatuses: OrderStatus[] = [
@@ -254,7 +265,9 @@ export class JsonFileStore implements Store {
   }
 
   getMenu(): ReadonlyArray<MenuItem> {
-    return this.menu.filter((item) => item.isCurrentVersion !== false);
+    return this.menu
+      .filter((item) => item.isCurrentVersion !== false)
+      .sort(compareMenuItems);
   }
 
   async createMenuItem(input: {
@@ -274,6 +287,7 @@ export class JsonFileStore implements Store {
       category: input.category,
       description: input.description,
       image_url: input.image_url,
+      sortOrder: this.nextSortOrder(input.category),
       version: 1,
       isCurrentVersion: true,
       changeReason: "Initial creation",
@@ -319,6 +333,10 @@ export class JsonFileStore implements Store {
       category: patch.category ?? menuItem.category,
       description: patch.description ?? menuItem.description,
       image_url: patch.image_url ?? menuItem.image_url,
+      sortOrder:
+        patch.category !== undefined && patch.category !== menuItem.category
+          ? this.nextSortOrder(patch.category)
+          : menuItem.sortOrder,
       version: menuItem.version + 1,
       isCurrentVersion: true,
       supersedes: menuItem.id,
@@ -338,6 +356,35 @@ export class JsonFileStore implements Store {
     await this.persist();
 
     return newMenuItem;
+  }
+
+  async reorderMenuItem(
+    menuId: number,
+    input: { direction: "up" | "down" },
+  ): Promise<ReadonlyArray<MenuItem> | null> {
+    const currentItems = this.getMenu();
+    const item = currentItems.find((target) => target.id === menuId);
+    if (!item) {
+      return null;
+    }
+
+    const categoryItems = currentItems.filter(
+      (target) => target.category === item.category,
+    );
+    const itemIndex = categoryItems.findIndex((target) => target.id === menuId);
+    const swapIndex = input.direction === "up" ? itemIndex - 1 : itemIndex + 1;
+    const swapItem = categoryItems[swapIndex];
+
+    if (!swapItem) {
+      return currentItems;
+    }
+
+    const itemSortOrder = item.sortOrder ?? item.id;
+    item.sortOrder = swapItem.sortOrder ?? swapItem.id;
+    swapItem.sortOrder = itemSortOrder;
+
+    await this.persist();
+    return this.getMenu();
   }
 
   async getMenuItemHistory?(
@@ -695,7 +742,7 @@ export class JsonFileStore implements Store {
 
   private applyStore(store: DataStore): void {
     this.users = store.users;
-    this.menu = store.menu;
+    this.menu = this.normalizeSortOrders(store.menu);
     this.orders = store.orders;
 
     const maxUserId = this.users.reduce((max, user) => {
@@ -715,6 +762,46 @@ export class JsonFileStore implements Store {
     this.userIdCounter = Math.max(store.userIdCounter || 0, maxUserId);
     this.menuIdCounter = Math.max(store.menuIdCounter || 0, maxMenuId);
     this.orderIdCounter = Math.max(store.orderIdCounter || 0, maxOrderId);
+  }
+
+  private nextSortOrder(category: string): number {
+    const maxSortOrder = this.menu
+      .filter(
+        (item) =>
+          item.isCurrentVersion !== false && item.category === category,
+      )
+      .reduce(
+        (max, item) => Math.max(max, item.sortOrder ?? item.id),
+        0,
+      );
+
+    return maxSortOrder + 1;
+  }
+
+  private normalizeSortOrders(menu: MenuItem[]): MenuItem[] {
+    const currentByCategory = new Map<string, MenuItem[]>();
+    const normalized = menu.map((item) => ({ ...item }));
+
+    for (const item of normalized) {
+      if (item.isCurrentVersion === false) {
+        continue;
+      }
+
+      currentByCategory.set(item.category, [
+        ...(currentByCategory.get(item.category) ?? []),
+        item,
+      ]);
+    }
+
+    for (const categoryItems of currentByCategory.values()) {
+      categoryItems
+        .sort((a, b) => (a.sortOrder ?? a.id) - (b.sortOrder ?? b.id))
+        .forEach((item, index) => {
+          item.sortOrder = index + 1;
+        });
+    }
+
+    return normalized;
   }
 
   private buildStoreSnapshot(): DataStore {

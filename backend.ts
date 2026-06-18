@@ -105,6 +105,7 @@ const menuItemSchema = t.Object({
   category: t.String({ minLength: 1 }),
   description: t.String(),
   image_url: t.String({ minLength: 1 }),
+  sortOrder: t.Optional(t.Number({ minimum: 0 })),
   version: t.Number({ minimum: 1 }),
   isCurrentVersion: t.Optional(t.Boolean()),
   supersedes: t.Optional(t.Number({ minimum: 1 })),
@@ -803,6 +804,47 @@ app.get(
     },
     response: {
       200: menuListResponseSchema,
+    },
+  },
+);
+
+app.patch(
+  "/api/menu/:id/sort",
+  async ({ params, body, request, set }) => {
+    if (!isMerchantRequest(request)) {
+      set.status = 403;
+      return merchantRequired();
+    }
+
+    const menuId = parseInt(params.id);
+    const menuItems = await store.reorderMenuItem(menuId, {
+      direction: body.direction,
+    });
+
+    if (!menuItems) {
+      set.status = 404;
+      return { error: "Menu item not found" };
+    }
+
+    return { data: [...menuItems] };
+  },
+  {
+    params: t.Object({
+      id: t.String({ pattern: "^[0-9]+$" }),
+    }),
+    body: t.Object({
+      direction: t.Union([t.Literal("up"), t.Literal("down")]),
+    }),
+    detail: {
+      tags: ["menu"],
+      summary: "Reorder a menu item",
+      description:
+        "Move a current menu item up or down within its category display order.",
+    },
+    response: {
+      200: menuListResponseSchema,
+      403: apiErrorResponseSchema,
+      404: apiErrorResponseSchema,
     },
   },
 );

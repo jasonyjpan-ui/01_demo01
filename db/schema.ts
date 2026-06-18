@@ -24,6 +24,7 @@ export const menuItemsTable = pgTable("menu_items", {
   category: text("category").notNull(),
   description: text("description").notNull(),
   imageUrl: text("image_url").notNull(),
+  sortOrder: integer("sort_order").notNull().default(0),
   version: integer("version").notNull().default(1),
   isCurrentVersion: boolean("is_current_version").notNull().default(true),
   supersedes: integer("supersedes"),

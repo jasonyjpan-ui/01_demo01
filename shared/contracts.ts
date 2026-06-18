@@ -9,6 +9,7 @@ export interface MenuItem {
   category: string;
   description: string;
   image_url: string;
+  sortOrder?: number;
   version: number;
   isCurrentVersion?: boolean;
   supersedes?: number;

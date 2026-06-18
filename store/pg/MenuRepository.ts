@@ -1,4 +1,4 @@
-import { and, eq, sql } from "drizzle-orm";
+import { and, asc, eq, sql } from "drizzle-orm";
 import type { MenuItem } from "../../shared/contracts.ts";
 import { getDb } from "../../db/client.ts";
 import { menuItemsTable } from "../../db/schema.ts";
@@ -13,6 +13,7 @@ function toMenuItem(row: typeof menuItemsTable.$inferSelect): MenuItem {
     category: row.category,
     description: row.description,
     image_url: row.imageUrl,
+    sortOrder: row.sortOrder,
     version: row.version,
     isCurrentVersion: row.isCurrentVersion,
     supersedes: row.supersedes || undefined,
@@ -50,6 +51,7 @@ export class MenuRepository {
         category: input.category,
         description: input.description,
         imageUrl: input.image_url,
+        sortOrder: nextId,
         version: 1,
         isCurrentVersion: true,
         changeReason: "Initial creation",
@@ -112,6 +114,7 @@ export class MenuRepository {
           category: patch.category ?? original.category,
           description: patch.description ?? original.description,
           imageUrl: patch.image_url ?? original.imageUrl,
+          sortOrder: original.sortOrder,
           version: original.version + 1,
           isCurrentVersion: true,
           supersedes: original.id,
@@ -126,6 +129,68 @@ export class MenuRepository {
         .returning();
 
       return inserted ? toMenuItem(inserted) : null;
+    });
+  }
+
+  async reorderMenuItem(
+    menuId: number,
+    input: { direction: "up" | "down" },
+  ): Promise<MenuItem[] | null> {
+    return await getDb().transaction(async (tx) => {
+      const [target] = await tx
+        .select()
+        .from(menuItemsTable)
+        .where(
+          and(
+            eq(menuItemsTable.id, menuId),
+            eq(menuItemsTable.isCurrentVersion, true),
+          ),
+        );
+
+      if (!target) {
+        return null;
+      }
+
+      const categoryRows = await tx
+        .select()
+        .from(menuItemsTable)
+        .where(
+          and(
+            eq(menuItemsTable.category, target.category),
+            eq(menuItemsTable.isCurrentVersion, true),
+          ),
+        )
+        .orderBy(asc(menuItemsTable.sortOrder), asc(menuItemsTable.id));
+
+      const targetIndex = categoryRows.findIndex((row) => row.id === target.id);
+      const swapIndex = input.direction === "up" ? targetIndex - 1 : targetIndex + 1;
+      const swap = categoryRows[swapIndex];
+
+      if (!swap) {
+        return categoryRows.map(toMenuItem);
+      }
+
+      await tx
+        .update(menuItemsTable)
+        .set({ sortOrder: swap.sortOrder })
+        .where(eq(menuItemsTable.id, target.id));
+
+      await tx
+        .update(menuItemsTable)
+        .set({ sortOrder: target.sortOrder })
+        .where(eq(menuItemsTable.id, swap.id));
+
+      const updatedRows = await tx
+        .select()
+        .from(menuItemsTable)
+        .where(eq(menuItemsTable.isCurrentVersion, true))
+        .orderBy(
+          asc(menuItemsTable.category),
+          asc(menuItemsTable.sortOrder),
+          asc(menuItemsTable.id),
+        );
+
+      return updatedRows.map(toMenuItem);
     });
   }
 
@@ -184,6 +249,7 @@ export class MenuRepository {
           category: source.category,
           description: source.description,
           imageUrl: source.imageUrl,
+          sortOrder: source.sortOrder,
           version: latestVersion + 1,
           isCurrentVersion: true,
           supersedes: current?.id ?? source.id,

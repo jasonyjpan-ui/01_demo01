@@ -43,6 +43,16 @@ function calculateTotal(items: ReadonlyArray<OrderItem>): number {
   return items.reduce((sum, item) => sum + item.item.price * item.qty, 0);
 }
 
+function compareMenuItems(a: MenuItem, b: MenuItem): number {
+  const categoryCompare = a.category.localeCompare(b.category, "zh-Hant");
+  if (categoryCompare !== 0) {
+    return categoryCompare;
+  }
+
+  const sortCompare = (a.sortOrder ?? a.id) - (b.sortOrder ?? b.id);
+  return sortCompare !== 0 ? sortCompare : a.id - b.id;
+}
+
 function parseUserId(userId: string): number | undefined {
   const parsed = Number(userId);
   return Number.isInteger(parsed) && parsed > 0 ? parsed : undefined;
@@ -145,7 +155,7 @@ export class PgStore implements Store {
   }
 
   getMenu(): ReadonlyArray<MenuItem> {
-    return this.menu;
+    return [...this.menu].sort(compareMenuItems);
   }
 
   async createMenuItem(input: {
@@ -157,6 +167,7 @@ export class PgStore implements Store {
   }): Promise<MenuItem> {
     const createdItem = await this.menuRepository.createMenuItem(input);
     this.menu.push(createdItem);
+    this.menu.sort(compareMenuItems);
     return createdItem;
   }
 
@@ -185,6 +196,19 @@ export class PgStore implements Store {
     }
 
     return nextItem;
+  }
+
+  async reorderMenuItem(
+    menuId: number,
+    input: { direction: "up" | "down" },
+  ): Promise<ReadonlyArray<MenuItem> | null> {
+    const reorderedMenu = await this.menuRepository.reorderMenuItem(menuId, input);
+    if (!reorderedMenu) {
+      return null;
+    }
+
+    this.menu = [...reorderedMenu].sort(compareMenuItems);
+    return this.getMenu();
   }
 
   async getMenuItemHistory(menuId: number): Promise<Array<{
@@ -605,6 +629,7 @@ export class PgStore implements Store {
           category: item.category,
           description: item.description,
           imageUrl: item.image_url,
+          sortOrder: item.sortOrder ?? item.id,
           version: item.version,
           isCurrentVersion: item.isCurrentVersion ?? true,
           supersedes: item.supersedes,
@@ -668,7 +693,11 @@ export class PgStore implements Store {
       .select()
       .from(menuItemsTable)
       .where(eq(menuItemsTable.isCurrentVersion, true))
-      .orderBy(asc(menuItemsTable.id));
+      .orderBy(
+        asc(menuItemsTable.category),
+        asc(menuItemsTable.sortOrder),
+        asc(menuItemsTable.id),
+      );
     const orderRows = await getDb()
       .select()
       .from(ordersTable)
@@ -710,6 +739,7 @@ export class PgStore implements Store {
       category: row.category,
       description: row.description,
       image_url: row.imageUrl,
+      sortOrder: row.sortOrder,
       version: row.version,
       isCurrentVersion: row.isCurrentVersion,
       supersedes: row.supersedes || undefined,
@@ -732,6 +762,7 @@ export class PgStore implements Store {
           category: row.category,
           description: row.description,
           image_url: row.imageUrl,
+          sortOrder: row.itemId,
           version: row.version,
           isCurrentVersion: row.isCurrentVersion ?? row.version === row.currentMenuVersion,
         },

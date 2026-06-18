@@ -510,6 +510,13 @@ export default function App() {
       a.localeCompare(b, "zh-Hant"),
     );
 
+    for (const category of categories) {
+      groupedItems[category].sort((a, b) => {
+        const sortCompare = (a.sortOrder ?? a.id) - (b.sortOrder ?? b.id);
+        return sortCompare !== 0 ? sortCompare : a.id - b.id;
+      });
+    }
+
     return { groupedItems, categories };
   }, [items]);
 
@@ -1108,6 +1115,40 @@ export default function App() {
     }
   }
 
+  async function reorderMenuItem(
+    item: MenuItem,
+    direction: "up" | "down",
+  ): Promise<void> {
+    setActionError("");
+    setMenuActionId(item.id);
+
+    try {
+      const response = await apiFetch(`/api/menu/${item.id}/sort`, {
+        method: "PATCH",
+        headers: { "Content-Type": "application/json", ...authHeaders() },
+        body: JSON.stringify({ direction }),
+      });
+
+      const payload = (await response.json()) as ApiDataResponse<MenuItem[]>;
+      if (!response.ok) {
+        throw new Error(
+          "error" in payload ? String(payload.error) : `HTTP ${response.status}`,
+        );
+      }
+
+      setItems(Array.isArray(payload?.data) ? payload.data : []);
+    } catch (sortError) {
+      console.error(sortError);
+      setActionError(
+        sortError instanceof Error
+          ? `菜單排序失敗：${sortError.message}`
+          : "菜單排序失敗。",
+      );
+    } finally {
+      setMenuActionId(null);
+    }
+  }
+
   async function submitMenuEdit(): Promise<void> {
     if (!editingMenuItem) {
       return;
@@ -1412,7 +1453,7 @@ export default function App() {
                 {category}
               </h2>
               <div className="grid grid-cols-1 gap-4 md:grid-cols-2 lg:grid-cols-3">
-                {(grouped.groupedItems[category] || []).map((item) => (
+                {(grouped.groupedItems[category] || []).map((item, itemIndex, categoryItems) => (
                   <article
                     key={item.id}
                     className="card bg-base-100 shadow-md transition-shadow hover:shadow-lg"
@@ -1480,7 +1521,30 @@ export default function App() {
                         </button>
                       </div>
                       {isMerchant ? (
-                        <div className="grid grid-cols-3 gap-2">
+                        <div className="grid grid-cols-5 gap-2">
+                          <button
+                            type="button"
+                            className="btn btn-xs btn-outline"
+                            disabled={itemIndex === 0 || menuActionId === item.id}
+                            onClick={() => {
+                              void reorderMenuItem(item, "up");
+                            }}
+                          >
+                            上移
+                          </button>
+                          <button
+                            type="button"
+                            className="btn btn-xs btn-outline"
+                            disabled={
+                              itemIndex === categoryItems.length - 1 ||
+                              menuActionId === item.id
+                            }
+                            onClick={() => {
+                              void reorderMenuItem(item, "down");
+                            }}
+                          >
+                            下移
+                          </button>
                           <button
                             type="button"
                             className="btn btn-xs btn-outline"

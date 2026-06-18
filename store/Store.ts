@@ -40,6 +40,10 @@ export interface Store {
       changeReason?: string;
     },
   ): Promise<MenuItem | null>;
+  reorderMenuItem(
+    menuId: number,
+    input: { direction: "up" | "down" },
+  ): Promise<ReadonlyArray<MenuItem> | null>;
   deleteMenuItem(menuId: number): Promise<MenuItem | null>;
   restoreMenuItem?(
     menuId: number,

@@ -40,6 +40,29 @@ describe("JsonFileStore versioned menu behavior", () => {
     expect(created.version).toBe(1);
   });
 
+  it("reorders menu items within the same category", async () => {
+    const store = await createStore();
+    const initialMenu = store.getMenu();
+    const first = initialMenu[0];
+    const second = initialMenu.find(
+      (item) => item.category === first.category && item.id !== first.id,
+    );
+
+    expect(second).toBeDefined();
+
+    const reordered = await store.reorderMenuItem(second!.id, {
+      direction: "up",
+    });
+
+    expect(reordered).not.toBeNull();
+    const categoryItems = store
+      .getMenu()
+      .filter((item) => item.category === first.category);
+
+    expect(categoryItems[0].id).toBe(second!.id);
+    expect(categoryItems[1].id).toBe(first.id);
+  });
+
   it("increments version on successful menu update", async () => {
     const store = await createStore();
     const menu = store.getMenu();
